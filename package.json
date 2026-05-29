@@ -53,7 +53,6 @@
     "node-virtualbox": "^0.2.3",
     "ora": "^4.0.3",
     "ping": "^0.2.2",
-    "prompt": "^1.0.0",
     "request": "^2.88.2",
     "scp2": "^0.5.0",
     "simple-git": "^1.131.0",

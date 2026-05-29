@@ -1,19 +1,15 @@
 const mustache = require('mustache');
 const yaml = require('js-yaml');
 const fs = require('fs');
-const prompt = require("prompt");
+const inquirer = require('inquirer');
 
-async function promptValue(propertyName, description)
-{
-    return new Promise((resolve, reject) => {
-        prompt.start();
-        prompt.get([{name: propertyName, description: description }], function (err, result)
-        {
-            if (err) { console.log(err); }
-            //prompt.stop();
-            resolve(result[propertyName]);
-        });
-    });
+async function promptValue(propertyName, description) {
+    const answers = await inquirer.prompt([{
+        type: 'input',
+        name: propertyName,
+        message: description
+    }]);
+    return answers[propertyName];
 }
 
 async function traverse(o) {
