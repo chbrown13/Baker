@@ -362,8 +362,8 @@ describe('resolve.js local mode', function() {
 
     it('should patch copy method to copy playbook to local location', async function() {
         const resolve = require('../../lib/bakelets/resolve');
-        const origRunLocalPlaybook = Ansible.runLocalPlaybook;
-        Ansible.runLocalPlaybook = async () => {};
+        const origRunAnsiblePlaybook = Ansible.runAnsiblePlaybook;
+        Ansible.runAnsiblePlaybook = async () => {};
         const yml = {
             name: 'test-local-resolve',
             local: testBakeDir,
@@ -374,7 +374,7 @@ describe('resolve.js local mode', function() {
             await resolve.resolveBakelet(bakeletsPath, remotesPath, yml, testBakeDir, false, testBakeDir);
         } catch (err) {
         } finally {
-            Ansible.runLocalPlaybook = origRunLocalPlaybook;
+            Ansible.runAnsiblePlaybook = origRunAnsiblePlaybook;
         }
 
         var files = await fs.readdir(testBakeDir);
@@ -386,8 +386,8 @@ describe('resolve.js local mode', function() {
     it('should use fallback yml file when exact playbook does not exist', async function() {
         const resolve = require('../../lib/bakelets/resolve');
         let usedPlaybook = '';
-        const origRunLocalPlaybook = Ansible.runLocalPlaybook;
-        Ansible.runLocalPlaybook = async (doc, cmd) => { usedPlaybook = cmd; };
+        const origRunAnsiblePlaybook = Ansible.runAnsiblePlaybook;
+        Ansible.runAnsiblePlaybook = async (doc, cmd) => { usedPlaybook = cmd; };
         const yml = {
             name: 'test-fallback',
             local: testBakeDir,
@@ -398,7 +398,7 @@ describe('resolve.js local mode', function() {
             await resolve.resolveBakelet(bakeletsPath, remotesPath, yml, testBakeDir, false, testBakeDir);
         } catch (err) {
         } finally {
-            Ansible.runLocalPlaybook = origRunLocalPlaybook;
+            Ansible.runAnsiblePlaybook = origRunAnsiblePlaybook;
         }
 
         expect(usedPlaybook).to.be.a('string');
@@ -408,8 +408,8 @@ describe('resolve.js local mode', function() {
     it('should support packages bakelet in local mode', async function() {
         const resolve = require('../../lib/bakelets/resolve');
         let usedPlaybooks = [];
-        const origRunLocalPlaybook = Ansible.runLocalPlaybook;
-        Ansible.runLocalPlaybook = async (doc, cmd) => { usedPlaybooks.push(cmd); };
+        const origRunAnsiblePlaybook = Ansible.runAnsiblePlaybook;
+        Ansible.runAnsiblePlaybook = async (doc, cmd) => { usedPlaybooks.push(cmd); };
         const yml = {
             name: 'test-packages',
             local: testBakeDir,
@@ -420,7 +420,7 @@ describe('resolve.js local mode', function() {
             await resolve.resolveBakelet(bakeletsPath, remotesPath, yml, testBakeDir, false, testBakeDir);
         } catch (err) {
         } finally {
-            Ansible.runLocalPlaybook = origRunLocalPlaybook;
+            Ansible.runAnsiblePlaybook = origRunAnsiblePlaybook;
         }
 
         expect(usedPlaybooks.length).to.be.at.least(1);
