@@ -55,6 +55,21 @@ commands:
   gh-deploy: mkdocs gh-deploy
 ```
 
+Baker can also run bakelets directly on your host machine without a VM or container — ideal for workstation setup or CI environments.
+
+``` yaml
+name: dev-env
+local: {}
+lang:
+  - nodejs9
+  - python3
+tools:
+  - jupyter
+start: jupyter notebook --no-browser
+```
+
+The `local` key accepts a path string (e.g. `local: ~/my-project`) to set the working directory, or `local: {}` to use the current directory. Bakelets run directly on your host — no VM, no container, no Ansible control VM needed.
+
 Setting up a Java environment with MySQL can be done easily.
 ``` yaml
 name: onboard
