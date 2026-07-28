@@ -55,6 +55,20 @@ commands:
   gh-deploy: mkdocs gh-deploy
 ```
 
+If you already have Docker installed, the `docker:` key provisions a container on your **local Docker daemon** — no VM required. Baker connects to `/var/run/docker.sock` (or `DOCKER_HOST`), so the same bakelets you use for VMs run inside a plain container.
+
+``` yaml
+name: dev-box
+docker: node:18       # or: docker: {} for ubuntu:latest, or an object with image/ports
+lang:
+  - python3
+tools:
+  - jupyter
+start: jupyter notebook --no-browser
+```
+
+Run `baker bake`, then `baker ssh` opens a shell inside the container and `baker destroy` removes it. If `name:` is omitted, the container name is derived from the current directory. Ansible-backed bakelets (lang, tools, services, …) use `ansible_connection=docker` and require Ansible on the host.
+
 Baker can also run bakelets directly on your host machine without a VM or container — ideal for workstation setup or CI environments.
 
 ``` yaml
@@ -97,3 +111,45 @@ commands:
   debug: cd CoffeeMaker && mvnDebug spring-boot:run
   test: cd CoffeeMaker && mvn test
 ```
+
+## Agentic coding tools
+
+Baker can install agentic coding CLIs into whatever environment it provisions (host, container, or box) as `tools:` bakelets. Currently `claude-code` and `opencode` are supported.
+
+``` yaml
+name: dev-env
+local: {}
+tools:
+  - claude-code                              # curl install (default)
+  - opencode:
+      install: npm                           # "curl" (default) or "npm"
+      repo: https://github.com/org/oc-config # optional: clone agents/skills config into the config dir
+```
+
+Installs are idempotent — re-baking an environment that already has the tool is a no-op. When a config `repo:` is given, Baker clones it on the first bake and fast-forwards it (`git pull --ff-only`) on subsequent bakes. Use the `url:dest` string form or the object form (`repo: { repo: <url>, dest: <path> }`) to control where it lands.
+
+## Flexible baker.yml sources
+
+`baker bake [source]` accepts a single positional argument that covers most of the ways you might point at a config:
+
+``` bash
+baker bake                              # ./baker.yml in the current directory
+baker bake ./path/to/dir                # a directory containing baker.yml
+baker bake ./env.yml                    # any .yml/.yaml file (treated as the baker file)
+baker bake owner/repo                   # clone a GitHub repo with a top-level baker.yml
+baker bake owner/repo:config.yml        # clone a repo and use a named top-level .yml file
+baker bake https://.../tree/...         # tree URL, gist, snippet, or raw file URL
+```
+
+Local paths always win over GitHub shorthand, so a real `./owner/repo` directory is used as-is. The explicit `--local`, `--repo`, `--file`, and `--box` flags still work as overrides.
+
+## Verifying an environment
+
+`baker check` verifies that an environment ended up configured correctly by delegating to [opunit](https://github.com/ottomatica/opunit).
+
+``` bash
+baker check                             # opunit verify local — runs test/opunit.yml on this machine
+baker check user/repo:profile.yml       # opunit profile — runs a GitHub-hosted opunit profile
+```
+
+Requires opunit installed globally: `npm install -g ottomatica/opunit`.
