@@ -1,0 +1,375 @@
+# Baker CLI Reference
+
+Run `baker <command> --help` for per-command flags and examples.
+
+See also: [`baker.yml` reference](baker-yml-reference.md) ·
+[Configuration sources](configuration-sources.md) · [Providers](providers.md)
+
+---
+
+## `bake`
+
+Bake a VM/container/local environment from a `baker.yml`.
+
+```
+baker bake [source]
+           [--local <path>] [--repo <url>] [--file <url>] [--box <path>]
+           [--useContainer] [--useVM] [--verbose]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `source` | Where the `baker.yml` comes from: a directory, a local `.yml` file, `owner/repo`, `owner/repo:file.yml`, or a URL. Omit to use `./baker.yml`. |
+
+```bash
+baker bake                                # ./baker.yml
+baker bake ~/project                      # a directory containing baker.yml
+baker bake ./python2.yml                  # any .yml file, treated as the baker.yml
+baker bake ottomatica/baker-test          # clone a GitHub repo, use its baker.yml
+baker bake ottomatica/envs:ml.yml         # clone, then use a named top-level file
+baker bake https://gist.github.com/…      # a gist, snippet, or raw file URL
+```
+
+An existing local path always wins over the `owner/repo` shorthand. See
+[Configuration sources](configuration-sources.md) for the full resolution order.
+
+**Flags** — explicit overrides that bypass the positional resolver:
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--local` | `-l` | Path to directory containing `baker.yml` |
+| `--repo` | `-r` | Git repo URL to clone; `baker.yml` must be in its root |
+| `--file` | `-f` | URL to a single `baker.yml` — gist, GitLab snippet, or raw file |
+| `--box` | `-b` | Directory containing `baker.yml`; routes to `bakeBox` |
+| `--useContainer` | | Force the runc container provider |
+| `--useVM` | | Force the VirtualBox provider |
+| `--verbose` | `-v` | Print Ansible variables and full playbook output |
+| `--forceVirtualBox` | | macOS only: use VirtualBox instead of HyperKit for `baker-srv` (hidden, debug) |
+
+The provider is chosen from the top-level keys in `baker.yml` — there is no provider flag. See
+[Providers](providers.md#how-a-provider-is-selected).
+
+> **`--remote` is broken.** The flags `--remote`, `--remote_key`, and `--remote_user` route to
+> `BakerObj.bakeRemote()`, which does not exist, so they throw a `TypeError`. Use the `remote:`
+> key in `baker.yml` instead — see [Providers](providers.md#remote--a-server-you-already-have).
+
+---
+
+## `boxes`
+
+List existing Baker boxes (Vagrant boxes).
+
+```
+baker boxes
+```
+
+---
+
+## `cluster`
+
+Bake a cluster from a `baker.yml`.
+
+```
+baker cluster --local <path> [--repo <url>] [--verbose]
+```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--local` | `-l` | Path to directory containing `baker.yml` |
+| `--repo` | `-r` | Git repo URL to clone |
+| `--verbose` | `-v` | Verbose output |
+
+---
+
+## `check`
+
+Run [opunit](https://github.com/ottomatica/opunit) checks to verify an environment is
+configured correctly. This command delegates to the `opunit` CLI, which must be installed
+and on your `PATH` (`npm install -g ottomatica/opunit`).
+
+```
+baker check [target]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `target` | A profile address `<user>/<repo>:<file.yml>`. Omit to run local checks. |
+
+**Two modes:**
+
+| Invocation | Delegates to | Runs against |
+|------------|--------------|--------------|
+| `baker check` | `opunit verify local` | the local machine, using `test/opunit.yml` |
+| `baker check <user>/<repo>:<file.yml>` | `opunit profile <address>` | the local machine, using a checks file fetched from GitHub |
+
+The profile address form (e.g. `chbrown13/profile:5704.yml`) fetches
+`https://raw.githubusercontent.com/<user>/<repo>/master/<file>` and runs it — identical to
+`opunit profile chbrown13/profile:5704.yml`.
+
+Opunit's output streams through directly, and its exit code is propagated, so
+`baker bake && baker check` works in CI.
+
+---
+
+## `delete` / `destroy`
+
+Remove a VM/container and its associated files.
+
+```
+baker delete [VMName]
+baker destroy [VMName]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--useContainer` | Override environment type to container |
+| `--useVM` | Override environment type to VM |
+
+Reads `baker.yml` from current directory if no name given.
+
+---
+
+## `docker`
+
+Manage Docker-based environments.
+
+```
+baker docker <command> [--local <path>]
+```
+
+**Sub-commands:**
+
+| Command | Description |
+|---------|-------------|
+| `bake` | Provision a container from `baker.yml` |
+| `start` | Start a container (blank, no bakelets) |
+| `stop` | Stop a container |
+| `destroy` | Remove a container |
+| `list` | List containers |
+| `ssh` | SSH into a container |
+| `images` | List Docker images |
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--local` | `-l` | Path to directory containing `baker.yml` |
+
+---
+
+## `halt` / `stop`
+
+Shut down a VM.
+
+```
+baker halt [VMName]
+baker stop [VMName]
+```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Force shutdown |
+
+Reads `baker.yml` from current directory if no name given.
+
+---
+
+## `import`
+
+Import a packaged Baker environment (`.box` file).
+
+```
+baker import <boxPath> [--name <name>] [--verbose]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `boxPath` | Path to the `.box` file |
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--name` | `-n` | Name for the imported box |
+| `--verbose` | `-v` | Verbose output |
+
+---
+
+## `info`
+
+Show information about a Baker environment.
+
+```
+baker info <envName> [--verbose] [--provider <provider>]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `envName` | Name of the environment |
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--verbose` | `-v` | Extended information |
+| `--provider` | `-p` | Provider-specific info (e.g. `digitalocean`) |
+
+---
+
+## `init`
+
+Create a `baker.yml` in the current directory via interactive prompts.
+
+```
+baker init
+```
+
+---
+
+## `package`
+
+Package a Baker VM into a `.box` file.
+
+```
+baker package <VMName> [--verbose]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `VMName` | Name of the VM to package |
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--verbose` | `-v` | Verbose output |
+
+---
+
+## `run`
+
+Run a registered cmdlet inside a Baker environment.
+
+```
+baker run [cmdlet] [--useContainer] [--useVM]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `cmdlet` | Command key from `commands:` section in `baker.yml` |
+
+Cmdlets are defined in `baker.yml`:
+```yaml
+commands:
+  test: pytest tests/
+  lint: eslint .
+```
+
+Running `baker run test` executes `pytest tests/` inside the environment.
+Running `baker run` with no match lists available cmdlets.
+
+---
+
+## `server`
+
+Manage the Baker server VM (used for provisioning).
+
+```
+baker server <cmdlet> [name]
+```
+
+**Sub-commands:**
+
+| Command | Description |
+|---------|-------------|
+| `ssh` | SSH into the Baker server |
+| `repair <name>` | Repair a broken environment (e.g. locked dpkg) |
+| `reload` | Stop and start the Baker server |
+| `stop` | Stop the Baker server |
+
+| Flag | Description |
+|------|-------------|
+| `--forceVirtualBox` | Force VirtualBox on Mac (debug only) |
+
+---
+
+## `setup`
+
+Install the Baker server VM (the control machine used for provisioning).
+
+```
+baker setup [--force]
+```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Destroy existing server first, then create new one |
+
+Validates system dependencies (VirtualBox, Vagrant) before installing.
+
+---
+
+## `setupmac`
+
+macOS-specific Baker server setup.
+
+```
+baker setupmac [--force] [--ssh]
+```
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--force` | `-f` | Reconfigure Baker for Mac |
+| `--ssh` | | SSH into the Baker for Mac VM directly |
+
+---
+
+## `ssh`
+
+SSH into a Baker environment.
+
+```
+baker ssh [VMName] [--useContainer] [--useVM]
+```
+
+Reads `baker.yml` from current directory if no name given.
+
+---
+
+## `start` / `up`
+
+Start a VM or container.
+
+```
+baker start [VMName]
+baker up [VMName]
+```
+
+Reads `baker.yml` from current directory if no name given.
+
+---
+
+## `status`
+
+Show virtualization support status and list all Baker environments.
+
+```
+baker status
+```
+
+Checks for hardware virtualization (VT-x/AMD-V) and then lists all VMs,
+containers, and local boxes.
+
+---
+
+## `vault`
+
+Encrypt, decrypt, or view an Ansible Vault file.
+
+```
+baker vault [file] [--view] [--decrypt] [--clear]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `file` | File to encrypt/decrypt |
+
+| Flag | Alias | Description |
+|------|-------|-------------|
+| `--view` | `-v` | View decrypted content (prompts for passphrase) |
+| `--decrypt` | `-u` | Decrypt and write to file |
+| `--clear` | `-c` | Clear stored vault passphrase |
+
+The passphrase is stored per-directory (prompted once, cached in configstore).
