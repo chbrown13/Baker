@@ -112,6 +112,63 @@ Opunit's output streams through directly, and its exit code is propagated, so
 
 ---
 
+## `cleanup`
+
+Remove what a bake put on this machine — the inverse of `bake`. Where `destroy` tears down the
+*environment*, `cleanup` undoes an *injection*: the files, config, environment variables, cloned
+repositories, and tools a bake placed on a machine you keep using.
+
+```
+baker cleanup [source]
+```
+
+`source` takes the same grammar as `bake` — a directory, `owner/repo[:subdir]`, or a URL. Omit it to
+use `./baker.yml`.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print the full plan and exit. No prompts, no changes, nothing logged |
+| `--yes`, `-y` | Non-interactive: accept the default answer for every prompt |
+| `--all` | With `--yes`, select everything not refused. Requires `--yes`; cannot override a guard |
+| `--verbose`, `-v` | Extra output from the removal process |
+
+### How it decides what to remove
+
+Cleanup re-derives the file set from the same config `bake` used, rather than scanning your project
+for anything that looks like Baker's. **A file Baker never placed can therefore never be removed** —
+it is not in the set. Directories are deleted only once empty, so one holding your own work survives.
+
+Defaults follow a risk gradient, and every one is overridable at the prompt:
+
+| Section | Default | Why |
+|---|---|---|
+| `files:`, `config:`, `env:` | **remove** | Baker placed them, in a scope Baker owns |
+| `tools:` | **keep** | Baker cannot tell whether it installed a tool or found it already there |
+| cloned repositories | **keep** | May hold work of yours |
+
+### Guards you cannot override
+
+A cloned repository with uncommitted changes, untracked files, or unpushed commits is **refused** —
+not offered, not selectable, and unaffected by `--all`. So is a clone destination that exists but
+is not a git repository. Only a clean clone is removable, because only a clean clone is recoverable
+from its remote.
+
+### Two limitations it states on every run
+
+- **Files Baker placed are Baker's.** A file you edited is still deleted; anything you need to keep
+  belongs on a path Baker does not write.
+- **Cleanup inverts the config it is given.** If the config changed since you baked, files from the
+  older version are not in the derived set and remain behind. The output names the directory where
+  they would be.
+
+Sections with no inverse yet — `lang:`, `services:`, `packages:`, `custom:`, `start:` — are reported
+and left alone at every flag combination.
+
+Every run appends to `~/.baker/cleanup.log` with a restore hint per item. That file stays on your
+machine and is never transmitted.
+
+---
+
 ## `delete` / `destroy`
 
 Remove a VM/container and its associated files.
@@ -127,6 +184,9 @@ baker destroy [VMName]
 | `--useVM` | Override environment type to VM |
 
 Reads `baker.yml` from current directory if no name given.
+
+`destroy` removes the environment; it does **not** remove what the bakelets put on the machine.
+Use [`cleanup`](#cleanup) for that.
 
 ---
 
