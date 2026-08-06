@@ -140,20 +140,34 @@ afterward; if the destination exists but isn't a git repo, Baker skips it rather
 
 ### `packages:` — OS Packages
 
-| Entry | Format | Description |
-|-------|--------|-------------|
-| `apt` | string or array | Install apt packages |
+A list of package names, installed with whatever package manager the target has
+(`apt`, `dnf`, `pacman`, `zypper`, `apk`, `brew`, or `choco`).
 
 ```yaml
 packages:
-  - apt: "curl, git, build-essential"
-  - apt:
-      - some-deb-pkg:
-          deb: "http://example.com/pkg.deb"
+  - jq
+  - tmux
 ```
 
-**String form**: comma-separated package names.
-**Array form**: supports sub-entries `deb:` for `.deb` URLs and `ppa:` for PPAs.
+Package names sometimes differ between systems. Where they do, give the name per
+manager; Baker uses `name` on any manager you do not list:
+
+```yaml
+packages:
+  - name: fd
+    apt: fd-find
+    dnf: fd-find
+    brew: fd
+    choco: fd
+```
+
+If you supply per-manager names but omit the one Baker detects, the bake fails
+rather than guessing — installing the wrong package is worse than stopping.
+
+> **Changed:** the old `packages: - apt:` form is removed. It named a package
+> manager in the schema, so a configuration written with it could only ever work
+> on Debian and Ubuntu. The `deb:` and `ppa:` sub-keys are removed with it; use
+> `custom:` for a one-off `.deb` install.
 
 ### `services:` — Background Services
 
@@ -248,8 +262,15 @@ env:
 The bakelet iterates the value with `forEach`, so a bare mapping (indented `KEY: value` pairs with
 no leading dashes) throws.
 
-Each entry is appended to `/etc/environment` on the target as an `export KEY=VALUE` line via
-Ansible's `lineinfile` module.
+Variables are set for the **user**, not the system, and so need no `sudo`:
+
+- **Linux and macOS** — written to `~/.baker/env.sh`, which is sourced from your shell profile.
+  The file is rewritten on every bake, so a variable you remove from `baker.yml` stops being set.
+- **Windows** — set with `[Environment]::SetEnvironmentVariable(..., "User")`, which persists for
+  new shells. Removing a variable from `baker.yml` does not currently unset it there.
+
+> **Changed:** this used to append to `/etc/environment`, which is a Debian convention that does
+> not exist on macOS, has no Windows equivalent, and required root.
 
 ### `custom:` — Custom Playbooks
 
@@ -402,7 +423,8 @@ tools:
   - maven
 
 packages:
-  - apt: "curl, git, build-essential"
+  - curl
+  - git
 
 services:
   - docker

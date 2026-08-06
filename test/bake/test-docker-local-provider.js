@@ -883,19 +883,6 @@ describe('Ansible docker methods', function() {
             Ansible.runDockerAdhoc = origRunDockerAdhoc;
         });
 
-        it('runDockerAptInstall should delegate to runDockerAdhoc with apt module', async function() {
-            let capturedArgs = [];
-            Ansible.runDockerAdhoc = async (doc, module, moduleArgs, containerName) => {
-                capturedArgs = [module, moduleArgs, containerName];
-            };
-
-            await Ansible.runDockerAptInstall({ name: 'test' }, 'curl', 'test-container', false);
-
-            expect(capturedArgs[0]).to.equal('apt');
-            expect(capturedArgs[1]).to.include('pkg=curl');
-            expect(capturedArgs[2]).to.equal('test-container');
-        });
-
         it('runDockerPipInstall should delegate to runDockerAdhoc with pip module', async function() {
             let capturedArgs = [];
             Ansible.runDockerAdhoc = async (doc, module, moduleArgs, containerName) => {
@@ -1025,11 +1012,12 @@ describe('resolve.js docker mode', function() {
         const origDockerPlaybook = Ansible.runDockerPlaybook;
         Ansible.runDockerPlaybook = async () => { dockerPlaybookCalled = true; };
 
-        // packages: rather than env: — env: became exec-based (no playbook) in
-        // the cross-platform work, so it can no longer prove Ansible patching.
+        // lang: is the vehicle because it is permanently playbook-backed. env:
+        // and packages: both became exec-based in the cross-platform work, so
+        // neither reaches Ansible any more.
         const yml = {
             name: 'test-docker-patch',
-            packages: [{apt: ['tmux']}]
+            lang: ['python']
         };
 
         try {

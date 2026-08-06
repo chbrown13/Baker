@@ -1,0 +1,107 @@
+# Proves Baker provisions on every platform it claims to support.
+#
+# The distro jobs run in containers driven by `docker run` rather than by the
+# `container:` key, because actions-in-containers needs a glibc Node and Alpine
+# does not have one. Checking out on the host and mounting the workspace keeps
+# all three distros on the same, simpler path.
+name: cross-platform
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Host runners: unit suite plus a real end-to-end bake.
+  host:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, label: 'ubuntu (apt)',        manager: apt }
+          - { os: macos-latest,  label: 'macos-arm (brew)',    manager: brew }
+          - { os: macos-13,      label: 'macos-intel (brew)',  manager: brew }
+          - { os: windows-latest, label: 'windows (choco)',    manager: choco }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Unit suite
+        run: npm test
+
+      - name: Bake the representative config
+        working-directory: test/resources/cross-platform
+        run: node ../../../baker.js bake
+
+      - name: "Assert packages: installed jq"
+        run: jq --version
+
+      - name: "Assert config: rendered the template"
+        shell: bash
+        working-directory: test/resources/cross-platform
+        run: |
+          cat greeting.txt
+          grep -q "hello from baker" greeting.txt
+
+      - name: "Assert env: reached the user environment (POSIX)"
+        if: runner.os != 'Windows'
+        run: |
+          grep -q "BAKER_E2E_TOKEN" ~/.baker/env.sh
+          . ~/.baker/env.sh && test "$BAKER_E2E_TOKEN" = "verified-by-ci"
+
+      - name: "Assert env: reached the user environment (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $value = [Environment]::GetEnvironmentVariable("BAKER_E2E_TOKEN", "User")
+          if ($value -ne "verified-by-ci") { throw "expected verified-by-ci, got '$value'" }
+
+      - name: Re-bake is a no-op, not an error
+        working-directory: test/resources/cross-platform
+        run: node ../../../baker.js bake
+
+  # Distributions with no hosted runner. The container is the target, so this
+  # also exercises the root/no-sudo path that docker-local provisioning uses.
+  distro:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: 'fedora:latest'
+            label: 'fedora (dnf)'
+            prep: 'dnf install -y nodejs npm git findutils'
+          - image: 'archlinux:latest'
+            label: 'arch (pacman)'
+            prep: 'pacman -Sy --noconfirm nodejs npm git'
+          - image: 'alpine:latest'
+            label: 'alpine (apk)'
+            prep: 'apk add --no-cache nodejs npm git bash'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit suite and bake inside ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD":/work -w /work ${{ matrix.image }} sh -c '
+            set -e
+            ${{ matrix.prep }}
+            npm install --no-audit --no-fund
+            npm test
+            cd test/resources/cross-platform
+            node ../../../baker.js bake
+            jq --version
+            grep -q "hello from baker" greeting.txt
+            grep -q BAKER_E2E_TOKEN ~/.baker/env.sh
+            # Re-bake must converge rather than fail.
+            node ../../../baker.js bake
+          '

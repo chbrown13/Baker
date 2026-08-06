@@ -158,26 +158,30 @@ services:
 
 ## `packages:` — OS packages
 
-Only `apt` is implemented.
+A plain list of package names. Baker detects the target's package manager and installs with it,
+so one configuration works on Debian, Fedora, Arch, openSUSE, Alpine, macOS, and Windows.
 
 ```yaml
 packages:
-  - apt: "curl, git, build-essential"
+  - curl
+  - git
+  - jq
 ```
 
-The string form is a comma-separated list. The list form additionally supports `.deb` URLs:
+Where a package is spelled differently by different managers, give the variants. Baker falls back
+to `name` for any manager you do not list, and fails rather than guessing if you list some but not
+the one it detected:
 
 ```yaml
 packages:
-  - apt:
-      - curl
-      - git
-      - my-package:
-          deb: "http://example.com/pkg.deb"
+  - name: fd
+    apt: fd-find
+    dnf: fd-find
+    brew: fd
 ```
 
-The bakelet renders `packages/apt.yml.mustache` into a playbook. A `ppa` bucket exists in the
-rendering logic but nothing populates it, so PPA entries are not currently parsed from YAML.
+The whole list is installed in a single command. Baker adds `sudo` only when the target is not
+already root, so this works unchanged inside a container.
 
 ---
 
@@ -248,8 +252,9 @@ env:
 with `forEach`, so a bare mapping (`env:` followed by indented `KEY: value` pairs without dashes)
 throws.
 
-Variables are appended to `/etc/environment` on the target as `export KEY=VALUE` lines via
-`lineinfile`.
+Variables are set for the **user**, so `env:` never needs `sudo`. On Linux and macOS they go to
+`~/.baker/env.sh`, sourced from the shell profile and rewritten whole on each bake so removals take
+effect; on Windows they are set at `User` scope via `SetEnvironmentVariable`.
 
 ---
 

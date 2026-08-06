@@ -213,18 +213,6 @@ describe('Ansible remote helper methods', function() {
         Ansible.runRemoteAdhoc = origRunRemoteAdhoc;
     });
 
-    it('runRemoteAptInstall should delegate to runRemoteAdhoc with apt module', async function() {
-        let capturedArgs = [];
-        Ansible.runRemoteAdhoc = async (doc, module, moduleArgs, config) => {
-            capturedArgs = [module, moduleArgs, config];
-        };
-
-        const config = makeRemoteSSHConfig();
-        await Ansible.runRemoteAptInstall({ name: 'test' }, 'curl', config, false);
-
-        expect(capturedArgs[0]).to.equal('apt');
-        expect(capturedArgs[1]).to.include('pkg=curl');
-    });
 
     it('runRemotePipInstall should delegate to runRemoteAdhoc with pip module', async function() {
         let capturedArgs = [];
@@ -718,16 +706,20 @@ describe('resolve.js remote mode', function() {
         let remotePlaybookCalled = false;
 
         Ssh.sshExec = async () => {};
+        // lang: copies a playbook, so the SCP transport needs stubbing too.
+        const origCopy = Ssh.copyFromHostToVM;
+        Ssh.copyFromHostToVM = async () => {};
         const origRemotePlaybook = Ansible.runRemotePlaybook;
         Ansible.runRemotePlaybook = async () => { remotePlaybookCalled = true; };
         Ansible.runAnsiblePlaybook = async () => {};
 
         const remoteSSHConfig = makeRemoteSSHConfig();
-        // packages: rather than env: — env: became exec-based (no playbook) in
-        // the cross-platform work, so it can no longer prove Ansible patching.
+        // lang: is the vehicle because it is permanently playbook-backed. env:
+        // and packages: both became exec-based in the cross-platform work, so
+        // neither reaches Ansible any more.
         const yml = {
             name: 'test-remote-patch',
-            packages: [{apt: ['tmux']}]
+            lang: ['python']
         };
 
         try {
@@ -735,6 +727,7 @@ describe('resolve.js remote mode', function() {
         } catch (err) {
         } finally {
             Ssh.sshExec = origSshExec;
+            Ssh.copyFromHostToVM = origCopy;
             Ansible.runAnsiblePlaybook = origRunAnsiblePlaybook;
             Ansible.runRemotePlaybook = origRemotePlaybook;
         }

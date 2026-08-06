@@ -162,6 +162,42 @@ await this.exec(
 
 Note the escaping — the rendered YAML goes through a shell `echo`.
 
+### Two kinds of bakelet
+
+Bakelets come in two shapes, and which you write decides where it can run.
+
+**Exec-based** (preferred). Declare a `commands` table keyed by package manager and let the base
+class do the rest. These work on Linux, macOS, and Windows, need no Ansible, and need no sudo
+unless they install to a system path:
+
+```javascript
+class Maven extends PackageTool {
+    constructor(name, cfg, version) { super(name, cfg, version); this.binName = 'mvn'; }
+    get commands() {
+        return {
+            apt: `${this.sudo}apt-get install -y maven`,
+            brew: 'brew install maven',
+            choco: 'choco install -y maven'
+        };
+    }
+}
+```
+
+Rules the suite enforces: no `sudo` in a `brew` command (Homebrew refuses to run under it), no
+single quotes anywhere (docker-local wraps commands in `bash -c '...'`), and use `this.sudo` rather
+than a literal prefix so the command still works as root in a container. Omitting a manager is a
+deliberate statement that the tool does not work there — Baker then fails naming `docker:` and
+`remote:` rather than inventing a package name.
+
+**Playbook-backed.** Provisions through Ansible, which pins it to a Linux target. Declare it:
+
+```javascript
+get requiresAnsible() { return true; }
+```
+
+so the bake pre-flight refuses it on a macOS or Windows laptop before anything runs, instead of
+failing partway through.
+
 ### Playbook conventions
 
 ```yaml

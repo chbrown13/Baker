@@ -274,13 +274,12 @@ describe('cross-platform bakelet contract', function() {
             });
         });
 
-        // Records how far the conversion has got. Portable-tier bakelets are
-        // playbook-backed until packages: and tools: are converted, so this is
-        // 0 today; it must go UP, never silently back down to 0 once tables
-        // exist, which is the failure the loop above cannot see by itself.
+        // Records how far the conversion has got, so the loop above can never
+        // silently fall back to checking nothing. Raise this as bakelets are
+        // converted; a drop means tables disappeared.
         it(`covers the ${withTables.length} portable-tier bakelets that declare tables`, function() {
-            expect(withTables.length).to.equal(0,
-                'Command tables now exist — raise this count so the invariants above are known to run.');
+            expect(withTables.length).to.equal(5,
+                'Command table count changed — update this so the invariants above are known to run.');
         });
     });
 

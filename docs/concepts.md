@@ -41,7 +41,7 @@ Bakelets are grouped into categories, and each category is a top-level list in `
 lang:      [python3, nodejs9]     # language runtimes
 tools:     [jupyter, maven]       # developer tools
 services:  [mysql5.7, docker]     # background services
-packages:  [{apt: "curl, git"}]   # OS packages
+packages:  [curl, git]            # OS packages
 config:    [...]                  # templated files, SSH keys, vault secrets
 resources: [...]                  # git clones and other external material
 env:       [...]                  # environment variables

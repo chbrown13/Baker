@@ -384,10 +384,10 @@ describe('resolve.js local mode', function() {
     });
 
     // Renamed from 'should use fallback yml file when exact playbook does not
-    // exist': the vehicle was env:, which became exec-based in the
-    // cross-platform work and no longer reaches Ansible at all. What this
-    // always actually asserted is that a playbook-backed bakelet in local mode
-    // hands Ansible a rendered .yml, which packages: still does.
+    // exist'. The vehicle is lang:, the only permanently playbook-backed
+    // section — env: and packages: both became exec-based in the cross-platform
+    // work. What this always actually asserted is that a playbook-backed
+    // bakelet in local mode hands Ansible a rendered .yml.
     it('should pass a rendered .yml playbook to Ansible in local mode', async function() {
         const resolve = require('../../lib/bakelets/resolve');
         let usedPlaybook = '';
@@ -396,7 +396,7 @@ describe('resolve.js local mode', function() {
         const yml = {
             name: 'test-fallback',
             local: testBakeDir,
-            packages: [{apt: ['tmux']}]
+            lang: ['python']
         };
 
         try {
@@ -410,25 +410,30 @@ describe('resolve.js local mode', function() {
         expect(usedPlaybook.endsWith('.yml')).to.be.true;
     });
 
+    // packages: is exec-based since the cross-platform work — it runs the
+    // detected manager's install command rather than an Ansible playbook.
     it('should support packages bakelet in local mode', async function() {
         const resolve = require('../../lib/bakelets/resolve');
-        let usedPlaybooks = [];
-        const origRunAnsiblePlaybook = Ansible.runAnsiblePlaybook;
-        Ansible.runAnsiblePlaybook = async (doc, cmd) => { usedPlaybooks.push(cmd); };
+        const origExecSync = child_process.execSync;
+        const issued = [];
+        child_process.execSync = (cmd) => {
+            issued.push(cmd);
+            return cmd.includes('/etc/os-release') ? 'ID=fedora\n' : '';
+        };
+
         const yml = {
             name: 'test-packages',
             local: testBakeDir,
-            packages: [{apt: 'curl'}]
+            packages: ['curl']
         };
 
         try {
             await resolve.resolveBakelet(bakeletsPath, remotesPath, yml, testBakeDir, false, testBakeDir);
-        } catch (err) {
         } finally {
-            Ansible.runAnsiblePlaybook = origRunAnsiblePlaybook;
+            child_process.execSync = origExecSync;
         }
 
-        expect(usedPlaybooks.length).to.be.at.least(1);
-        expect(usedPlaybooks[0]).to.match(/apt.*\.yml/);
+        const install = issued.find((c) => c.includes('curl') && !c.includes('os-release'));
+        expect(install).to.equal('sudo dnf install -y curl');
     });
 });

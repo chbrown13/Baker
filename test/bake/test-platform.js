@@ -145,7 +145,7 @@ describe('Platform detection', function() {
 
         it('resolves dnf from ID=fedora (AC-1)', async function() {
             const platform = await Platform.detect(withOsRelease('ID=fedora'), 'linux');
-            expect(platform).to.deep.equal({ os: 'linux', manager: 'dnf', shell: 'sh', family: 'rhel' });
+            expect(platform).to.deep.equal({ os: 'linux', manager: 'dnf', shell: 'sh', family: 'rhel', sudo: true });
         });
 
         it('resolves apt from ID=ubuntu', async function() {
@@ -163,7 +163,8 @@ describe('Platform detection', function() {
         it('does not probe binaries when ID_LIKE answers (AC-2)', async function() {
             const exec = withOsRelease('ID=rocky\nID_LIKE="rhel centos fedora"');
             await Platform.detect(exec, 'linux');
-            expect(exec.calls).to.deep.equal(['cat /etc/os-release']);
+            // `id -u` still runs — it decides the sudo prefix, not the manager.
+            expect(exec.calls.filter((c) => c.startsWith('command -v'))).to.deep.equal([]);
         });
 
         it('prefers ID over ID_LIKE when both are known', async function() {
@@ -230,12 +231,12 @@ describe('Platform detection', function() {
 
         it('resolves Windows to choco and powershell (AC-5)', async function() {
             const platform = await Platform.detect(stubExec({}), 'win32');
-            expect(platform).to.deep.equal({ os: 'windows', manager: 'choco', shell: 'powershell', family: 'nt' });
+            expect(platform).to.deep.equal({ os: 'windows', manager: 'choco', shell: 'powershell', family: 'nt', sudo: false });
         });
 
         it('resolves macOS to brew and sh (AC-5)', async function() {
             const platform = await Platform.detect(stubExec({}), 'darwin');
-            expect(platform).to.deep.equal({ os: 'macos', manager: 'brew', shell: 'sh', family: 'darwin' });
+            expect(platform).to.deep.equal({ os: 'macos', manager: 'brew', shell: 'sh', family: 'darwin', sudo: false });
         });
 
         it('issues no exec call at all on Windows or macOS (AC-5)', async function() {
@@ -259,6 +260,23 @@ describe('Platform detection', function() {
             // 'linux' because the container is what gets provisioned.
             const platform = await Platform.detect(withOsRelease('ID=ubuntu'), 'linux');
             expect(platform.manager).to.equal('apt');
+        });
+
+        it('needs no sudo when the target is already root', async function() {
+            const exec = withOsRelease('ID=ubuntu\n', { 'id -u': '0\n' });
+            expect((await Platform.detect(exec, 'linux')).sudo).to.equal(false);
+        });
+
+        it('needs sudo when the target is an ordinary user', async function() {
+            const exec = withOsRelease('ID=ubuntu\n', { 'id -u': '1000\n' });
+            expect((await Platform.detect(exec, 'linux')).sudo).to.equal(true);
+        });
+
+        it('assumes sudo is needed when the uid cannot be read', async function() {
+            // Safe direction: an unnecessary sudo on a root shell still works,
+            // whereas a missing one fails the install outright.
+            const exec = withOsRelease('ID=ubuntu\n');
+            expect((await Platform.detect(exec, 'linux')).sudo).to.equal(true);
         });
 
         it('defaults platformName to the running process platform', async function() {

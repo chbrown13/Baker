@@ -1,0 +1,21 @@
+# Representative configuration for the cross-platform CI matrix.
+#
+# Exercises every portable-tier section that exists today, using packages that
+# are spelled the same by every supported manager so a failure means Baker is
+# wrong rather than the package name being wrong.
+name: cross-platform-e2e
+local: .
+
+vars:
+  - greeting: hello
+
+env:
+  - BAKER_E2E_TOKEN: verified-by-ci
+
+packages:
+  - jq
+
+config:
+  - template:
+      src: greeting.tpl
+      dest: ./greeting.txt

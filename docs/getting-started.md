@@ -19,7 +19,8 @@ local: {}
 lang:
   - python3
 packages:
-  - apt: "curl, git"
+  - curl
+  - git
 commands:
   serve: python3 -m http.server 8000
   test: python3 -m pytest
@@ -82,7 +83,8 @@ docker: python:3.12
 lang:
   - python3
 packages:
-  - apt: "curl, git"
+  - curl
+  - git
 commands:
   serve: python3 -m http.server 8000
 ```
