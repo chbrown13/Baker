@@ -273,15 +273,65 @@ describe('cleanup plan construction', function() {
             expect(tool.command).to.equal('npm uninstall -g opencode-ai');
         });
 
-        it('reports no inverse for the curl default rather than guessing (AC-8)', async function() {
+        it('reports no inverse for a curl install it cannot derive (AC-8)', async function() {
+            // claude-code's installer is a bootstrapper: it downloads a binary,
+            // runs `<binary> install`, then deletes it, so the real footprint is
+            // decided by the binary rather than the script and cannot be read
+            // off it. That gap is reported, never guessed at.
+            const ClaudeCode = require('../../lib/bakelets/tools/claude-code');
+            const bakelet = localTool(ClaudeCode, envRoot);
+            bakelet.platform = { os: 'linux', manager: 'apt', shell: 'sh', family: 'debian', sudo: true };
+            await bakelet.prepare('claude-code', []);
+            const [tool] = await bakelet.plan();
+
+            expect(tool.kind).to.equal('none');
+            expect(tool.reason).to.contain('install method "curl"');
+            expect(tool.reason).to.contain('install: npm');
+        });
+
+        it('offers a curl inverse for opencode, whose install location is known', async function() {
             const bakelet = localTool(Opencode, envRoot);
             bakelet.platform = { os: 'linux', manager: 'apt', shell: 'sh', family: 'debian', sudo: true };
+            // Presence is stubbed so the result does not depend on whether the
+            // developer happens to have opencode installed.
+            bakelet.filterExisting = async (paths) => paths;
+            await bakelet.prepare('opencode', []);
+            const [tool] = await bakelet.plan();
+
+            expect(tool.kind).to.equal('exec');
+            expect(tool.command).to.contain('rm -f ~/.opencode/bin/opencode');
+            // The restore hint is the install command itself.
+            expect(tool.restore).to.contain('opencode.ai/install');
+        });
+
+        it('leaves the shell rc files alone in the curl inverse', async function() {
+            // A stale PATH entry to a gone directory is harmless; editing a file
+            // the user owns, on a marker the vendor wrote, is not.
+            const bakelet = localTool(Opencode, envRoot);
+            bakelet.filterExisting = async (paths) => paths;
+            await bakelet.prepare('opencode', []);
+            const [tool] = await bakelet.plan();
+
+            ['bashrc', 'zshrc', 'profile', 'fish', 'sed', 'PATH'].forEach((token) => {
+                expect(tool.command, token).to.not.contain(token);
+            });
+        });
+
+        it('reports the opencode binary as already gone when it is not there', async function() {
+            const bakelet = localTool(Opencode, envRoot);
+            bakelet.filterExisting = async () => [];
             await bakelet.prepare('opencode', []);
             const [tool] = await bakelet.plan();
 
             expect(tool.kind).to.equal('none');
-            expect(tool.reason).to.contain("install method \"curl\"");
-            expect(tool.reason).to.contain('install: npm');
+            expect(tool.reason).to.contain('already gone');
+        });
+
+        it('uses no single quotes in the curl inverse', async function() {
+            const bakelet = localTool(Opencode, envRoot);
+            bakelet.filterExisting = async (paths) => paths;
+            await bakelet.prepare('opencode', []);
+            expect((await bakelet.plan())[0].command).to.not.contain("'");
         });
 
         it('offers no uninstall command at all for an unknown method', async function() {
