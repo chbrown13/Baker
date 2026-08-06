@@ -383,7 +383,12 @@ describe('resolve.js local mode', function() {
         expect(ymlFiles[0]).to.match(/nodejs.*\.yml/);
     });
 
-    it('should use fallback yml file when exact playbook does not exist', async function() {
+    // Renamed from 'should use fallback yml file when exact playbook does not
+    // exist': the vehicle was env:, which became exec-based in the
+    // cross-platform work and no longer reaches Ansible at all. What this
+    // always actually asserted is that a playbook-backed bakelet in local mode
+    // hands Ansible a rendered .yml, which packages: still does.
+    it('should pass a rendered .yml playbook to Ansible in local mode', async function() {
         const resolve = require('../../lib/bakelets/resolve');
         let usedPlaybook = '';
         const origRunAnsiblePlaybook = Ansible.runAnsiblePlaybook;
@@ -391,7 +396,7 @@ describe('resolve.js local mode', function() {
         const yml = {
             name: 'test-fallback',
             local: testBakeDir,
-            env: [{BAKER_VAR: 'test'}]
+            packages: [{apt: ['tmux']}]
         };
 
         try {

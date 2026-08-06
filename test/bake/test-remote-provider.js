@@ -723,9 +723,11 @@ describe('resolve.js remote mode', function() {
         Ansible.runAnsiblePlaybook = async () => {};
 
         const remoteSSHConfig = makeRemoteSSHConfig();
+        // packages: rather than env: — env: became exec-based (no playbook) in
+        // the cross-platform work, so it can no longer prove Ansible patching.
         const yml = {
             name: 'test-remote-patch',
-            env: [{BAKER_VAR: 'test'}]
+            packages: [{apt: ['tmux']}]
         };
 
         try {
