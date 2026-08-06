@@ -200,16 +200,88 @@ config:
 
 | Entry | Purpose |
 |-------|---------|
+| `files` | Places files and directories at chosen paths, with overlays, pruning, and append |
 | `keys` | Copies the Baker private key into the environment as `<name>_id_rsa` for each listed name |
-| `template` | Copies a file and renders it through Ansible's `template` module, with `vars:` available |
+| `template` | Renders a file through Mustache and writes it to the target, with `vars:` available |
 | `vault` | Decrypts Ansible Vault files and places them on the target |
 
 `vault` prompts for a passphrase on first use and caches it per-directory in configstore. Manage
 it with `baker vault --clear`.
 
-> **Limitation:** `keys` and `template` call the SSH helpers directly instead of going through
-> `this.copy()`. They work in control-VM and remote modes but **not** in local or docker mode. See
+> **Limitation:** `keys` and `vault` call the SSH helpers directly instead of going through
+> `this.copy()`. They work in control-VM and remote modes but **not** in local or docker mode. Use
+> `files` instead where you only need to place a file. See
 > [Troubleshooting](troubleshooting.md#bakelets-that-bypass-the-transport).
+
+### `files` — declarative file placement
+
+Places files and directories at chosen paths inside the environment. Works in every mode, needs no
+Ansible and no sudo, and accepts local sources (relative to the `baker.yml`) or `http(s)` URLs.
+
+```yaml
+config:
+  - files:
+      # a shared base layer, then an overlay that wins on any shared path
+      - src: ../../base/
+        dest: .
+      - src: ./overlay/
+        dest: .
+
+      - src: ./scripts/submit.sh          # nested dest, made executable
+        dest: .scripts/submit.sh
+        mode: "0755"
+
+      - src: ./gitignore.block            # merge into a file you do not own
+        dest: .gitignore
+        append: true
+
+      - ensure: dir                       # a directory with no source
+        path: ~/.config/myapp/state
+
+      - src: ./templates/notes.md         # never replaced once it exists
+        dest: NOTES.md
+        overwrite: false
+
+      - .config/topics/current.md         # shorthand: same path both sides
+    run:
+      - npm --prefix .tooling install
+    prune: true
+```
+
+**Entry keys**
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `src` | required (unless `ensure`) | Path relative to the `baker.yml`, or an `http(s)` URL |
+| `dest` | defaults to `src` | Relative → environment root; absolute or `~`-prefixed → used verbatim |
+| `overwrite` | `true` | `false` skips the entry when the destination already exists |
+| `mode` | — | Octal chmod applied after placement, e.g. `"0755"` |
+| `append` | `false` | Write between markers instead of replacing the file |
+| `ensure` | — | `dir` creates `path:` as a directory; cannot be combined with `src`/`dest` |
+
+**Block keys**, siblings of `files:`:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `prune` | `false` | Remove in-root paths the last bake placed and this one did not |
+| `run` | `[]` | Commands run in the environment root after placement and pruning |
+
+**Ordering is the composition mechanism.** Entries apply in declaration order and a later entry
+wins at the same destination. Directory sources *merge* rather than replace, so a base layer plus a
+per-unit overlay needs no duplication and no extra schema.
+
+**Convergence.** Baker records what it placed in `.baker-manifest.json` at the environment root.
+With `prune: true`, a re-bake removes files the previous bake placed and this one does not, and
+removes directories that empty out as a result.
+
+> **Baker-placed files are Baker-owned.** A re-bake replaces your edits to them, and dropping an
+> entry from the config deletes the file. Anything you need to keep belongs on a path Baker does not
+> write. Pruning is driven entirely by the manifest, so a file Baker never placed is never removed —
+> including one sitting inside a directory Baker manages.
+
+`append:` writes between `# >>> baker:<name> >>>` markers and replaces that block in place on each
+re-bake, leaving the rest of the file untouched. It is a line-oriented block append, not a merge for
+JSON or YAML.
 
 ---
 

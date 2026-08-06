@@ -214,12 +214,20 @@ Array of config objects:
 
 | Entry | Format | Description |
 |-------|--------|-------------|
+| `files` | `{files: [...], prune: bool, run: [...]}` | Place files and directories at chosen paths |
 | `keys` | `{keys: ["client1", "client2"]}` | Copy SSH private keys into the environment |
-| `template` | `{template: {src: "local/file", dest: "/remote/path"}}` | Copy and template a file via Ansible |
+| `template` | `{template: {src: "local/file", dest: "/remote/path"}}` | Render a file and write it to the target |
 | `vault` | `{vault: [{file: "secret.yml", dest: "/remote/path"}]}` | Decrypt Ansible Vault files and deploy |
 
 ```yaml
 config:
+  - files:
+      - src: ./base/          # directory sources merge; later entries win
+        dest: .
+      - src: ./scripts/run.sh
+        dest: .scripts/run.sh
+        mode: "0755"
+    prune: true               # remove what the last bake placed and this one does not
   - keys: ["deploy", "app"]
   - template:
       src: ./nginx.conf
@@ -228,6 +236,9 @@ config:
       - file: secrets/database.yml
         dest: /etc/myapp/database.yml
 ```
+
+Full `files:` reference, including `append:`, `ensure: dir`, `overwrite:`, and the manifest that
+makes pruning safe: [Bakelets](bakelets.md#files--declarative-file-placement).
 
 ### `resources:` — External Resources
 

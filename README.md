@@ -109,6 +109,33 @@ commands:
   test: cd CoffeeMaker && mvn test
 ```
 
+## Placing files into an existing project
+
+`config: - files:` puts files and directories at chosen paths, composing a shared base with a
+per-unit overlay. It works in every mode, needs no Ansible and no sudo, and converges: with
+`prune: true` a re-bake removes what the previous bake placed and this one does not, while never
+touching a file Baker did not place.
+
+```yaml
+name: unit-1
+local: .
+config:
+  - files:
+      - src: ../../base/        # shared layer
+        dest: .
+      - src: ./overlay/         # unit-specific; wins on any shared path
+        dest: .
+      - src: ./gitignore.block  # merged between markers, not overwritten
+        dest: .gitignore
+        append: true
+    run:
+      - npm --prefix .tooling install
+    prune: true
+```
+
+Files Baker places are Baker-owned: a re-bake replaces edits to them, and removing an entry from
+the config deletes the file. See [docs/bakelets.md](docs/bakelets.md#files--declarative-file-placement).
+
 ## Agentic coding tools
 
 Baker can install agentic coding CLIs into whatever environment it provisions (host, container, or box) as `tools:` bakelets. Currently `claude-code` and `opencode` are supported.
