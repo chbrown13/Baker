@@ -17,12 +17,33 @@ describe('source resolver', function() {
             });
         });
 
-        it('classifies owner/repo:file as github-file with subpath', function() {
-            expect(classifyRemote('chbrown13/profile:sub/5704.yml')).to.deep.equal({
+        it('classifies owner/repo:file.yml as github-file with subpath', function() {
+            expect(classifyRemote('your-org/profiles:sub/env.yml')).to.deep.equal({
                 kind: 'github-file',
-                cloneUrl: 'https://github.com/chbrown13/profile.git',
-                subpath: 'sub/5704.yml'
+                cloneUrl: 'https://github.com/your-org/profiles.git',
+                subpath: 'sub/env.yml'
             });
+        });
+
+        it('classifies owner/repo:subdir as github-dir, not github-file', function() {
+            expect(classifyRemote('your-org/configs:assignments/unit-1')).to.deep.equal({
+                kind: 'github-dir',
+                cloneUrl: 'https://github.com/your-org/configs.git',
+                subpath: 'assignments/unit-1'
+            });
+        });
+
+        it('treats a .yaml suffix as a file address too', function() {
+            expect(classifyRemote('your-org/profiles:env.yaml').kind).to.equal('github-file');
+        });
+
+        it('keeps the two verbs\' accepted kinds disjoint', function() {
+            // bake takes directories, check takes files. Nothing classifies as both.
+            const dir  = classifyRemote('your-org/configs:units/one');
+            const file = classifyRemote('your-org/profiles:one.yml');
+            expect(dir.kind).to.equal('github-dir');
+            expect(file.kind).to.equal('github-file');
+            expect(dir.kind).to.not.equal(file.kind);
         });
 
         it('classifies http(s) URLs as url', function() {
@@ -90,14 +111,26 @@ describe('source resolver', function() {
             expect(await resolveSource(path.join(dir, 'baker.yml'))).to.equal(dir);
         });
 
-        it('stages a differently-named .yml file into a temp dir as baker.yml', async function() {
-            const file = path.join(tmpRoot, 'python2.yml');
-            fs.writeFileSync(file, 'name: python2\n');
-            process.chdir(tmpRoot); // temp dir is created under cwd
-            const resolved = await resolveSource(file);
-            expect(resolved).to.not.equal(path.dirname(file));
-            const staged = fs.readFileSync(path.join(resolved, 'baker.yml'), 'utf8');
-            expect(staged).to.equal('name: python2\n');
+        it('stages a differently-named .yml file into the cache as baker.yml, not cwd', async function() {
+            const origHome = process.env.HOME;
+            const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-home-'));
+            process.env.HOME = tmpHome;
+            try {
+                const file = path.join(tmpRoot, 'python2.yml');
+                fs.writeFileSync(file, 'name: python2\n');
+                process.chdir(tmpRoot);
+
+                const before = fs.readdirSync(tmpRoot);
+                const resolved = await resolveSource(file);
+                const after = fs.readdirSync(tmpRoot);
+
+                expect(after).to.deep.equal(before);        // nothing staged into cwd
+                expect(resolved.startsWith(path.join(tmpHome, '.baker', 'cache'))).to.equal(true);
+                expect(fs.readFileSync(path.join(resolved, 'baker.yml'), 'utf8')).to.equal('name: python2\n');
+            } finally {
+                if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
+                fs.rmSync(tmpHome, { recursive: true, force: true });
+            }
         });
 
         it('throws for an existing non-.yml file', async function() {
@@ -110,55 +143,128 @@ describe('source resolver', function() {
 
         it('clones owner/repo shorthand when it is not a local path', async function() {
             const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'fake-clone');
+            fs.mkdirSync(cloneDir);
+            fs.writeFileSync(path.join(cloneDir, 'baker.yml'), 'name: x\n');
             let cloned;
-            Git.clone = async (url) => { cloned = url; return '/tmp/fake-clone'; };
+            Git.clone = async (url) => { cloned = url; return cloneDir; };
             try {
                 process.chdir(tmpRoot); // ensure "ottomatica/baker-test" is not a real path
                 const resolved = await resolveSource('ottomatica/baker-test');
                 expect(cloned).to.equal('https://github.com/ottomatica/baker-test.git');
-                expect(resolved).to.equal('/tmp/fake-clone');
+                expect(resolved).to.equal(cloneDir);
             } finally {
                 Git.clone = orig;
             }
         });
 
-        it('resolves owner/repo:file.yml by cloning and promoting the file to baker.yml', async function() {
+        // AC-1 — the promote-a-named-file-to-baker.yml behaviour is gone. A
+        // :file.yml address is opunit's grammar; bake rejects it by name.
+        it('rejects owner/repo:file.yml, naming baker check (AC-1)', async function() {
+            const orig = Git.clone;
+            let cloneAttempted = false;
+            Git.clone = async () => { cloneAttempted = true; return '/tmp/should-not-happen'; };
+            try {
+                process.chdir(tmpRoot);
+                let err;
+                try { await resolveSource('owner/repo:unit-1.yml'); } catch (e) { err = e; }
+                expect(err).to.be.an('error');
+                expect(err.message).to.contain('addresses a file');
+                expect(err.message).to.contain('baker check owner/repo:unit-1.yml');
+                // "before any network access"
+                expect(cloneAttempted).to.equal(false);
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('rejects a top-level :baker.yml address too — it is still a file (AC-1)', async function() {
+            process.chdir(tmpRoot);
+            let err;
+            try { await resolveSource('owner/repo:baker.yml'); } catch (e) { err = e; }
+            expect(err.message).to.contain('addresses a file');
+        });
+
+        // AC-2 — subdirectory addressing, which used to be rejected outright.
+        it('resolves owner/repo:subdir to that subdirectory (AC-2)', async function() {
             const orig = Git.clone;
             const cloneDir = path.join(tmpRoot, 'clone');
-            fs.mkdirSync(cloneDir);
-            fs.writeFileSync(path.join(cloneDir, 'python2.yml'), 'name: python2\n');
+            const unitDir = path.join(cloneDir, 'assignments', 'unit-1');
+            fs.mkdirSync(unitDir, { recursive: true });
+            fs.writeFileSync(path.join(unitDir, 'baker.yml'), 'name: unit-1\n');
             let cloned;
             Git.clone = async (url) => { cloned = url; return cloneDir; };
             try {
                 process.chdir(tmpRoot);
-                const resolved = await resolveSource('ottomatica/repo:python2.yml');
-                expect(cloned).to.equal('https://github.com/ottomatica/repo.git');
-                expect(resolved).to.equal(cloneDir);
-                expect(fs.readFileSync(path.join(cloneDir, 'baker.yml'), 'utf8')).to.equal('name: python2\n');
+                const resolved = await resolveSource('your-org/configs:assignments/unit-1');
+                expect(cloned).to.equal('https://github.com/your-org/configs.git');
+                expect(resolved).to.equal(unitDir);
             } finally {
                 Git.clone = orig;
             }
         });
 
-        it('returns the clone dir as-is when owner/repo:baker.yml is top-level', async function() {
+        it('requires a literal baker.yml at the repo root for a bare owner/repo', async function() {
             const orig = Git.clone;
-            const cloneDir = path.join(tmpRoot, 'clone2');
+            const cloneDir = path.join(tmpRoot, 'clone-root');
             fs.mkdirSync(cloneDir);
-            fs.writeFileSync(path.join(cloneDir, 'baker.yml'), 'name: top\n');
+            fs.writeFileSync(path.join(cloneDir, 'baker.yml'), 'name: root\n');
             Git.clone = async () => cloneDir;
             try {
                 process.chdir(tmpRoot);
-                expect(await resolveSource('ottomatica/repo:baker.yml')).to.equal(cloneDir);
+                expect(await resolveSource('your-org/configs')).to.equal(cloneDir);
             } finally {
                 Git.clone = orig;
             }
         });
 
-        it('rejects sub-directory paths in owner/repo:sub/file.yml', async function() {
-            process.chdir(tmpRoot);
-            let err;
-            try { await resolveSource('owner/repo:sub/profile.yml'); } catch (e) { err = e; }
-            expect(err.message).to.match(/Sub-directory paths .* not supported/);
+        // AC-3
+        it('errors actionably when the subdirectory has no baker.yml (AC-3)', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone2');
+            const unitDir = path.join(cloneDir, 'units', 'two');
+            fs.mkdirSync(unitDir, { recursive: true });
+            Git.clone = async () => cloneDir;
+            try {
+                process.chdir(tmpRoot);
+                let err;
+                try { await resolveSource('your-org/configs:units/two'); } catch (e) { err = e; }
+                expect(err.message).to.contain('units/two');
+                expect(err.message).to.contain('https://github.com/your-org/configs.git');
+                expect(err.message).to.contain(unitDir);
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('errors naming the subdirectory when it does not exist at all (AC-3)', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone3');
+            fs.mkdirSync(cloneDir);
+            Git.clone = async () => cloneDir;
+            try {
+                process.chdir(tmpRoot);
+                let err;
+                try { await resolveSource('your-org/configs:units/absent'); } catch (e) { err = e; }
+                expect(err.message).to.match(/Sub-directory "units\/absent" does not exist/);
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('refuses a subdirectory that escapes the clone', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone4');
+            fs.mkdirSync(cloneDir);
+            Git.clone = async () => cloneDir;
+            try {
+                process.chdir(tmpRoot);
+                let err;
+                try { await resolveSource('your-org/configs:../../etc'); } catch (e) { err = e; }
+                expect(err.message).to.match(/resolves outside/);
+            } finally {
+                Git.clone = orig;
+            }
         });
 
         it('throws for unresolvable free-text input', async function() {
@@ -166,6 +272,72 @@ describe('source resolver', function() {
             let err;
             try { await resolveSource('this is not a source'); } catch (e) { err = e; }
             expect(err.message).to.match(/Could not resolve baker source/);
+        });
+    });
+
+    // AC-4 is the important one: students run Baker from inside repos they care
+    // about, so no remote form may leave anything behind in cwd. Git.clone and
+    // Git.fetchBakerFile are stubbed to write into the cache path they would
+    // really use, so this exercises the resolver's own path handling.
+    describe('AC-4: no remote form writes to cwd', function() {
+        let tmpRoot, tmpHome, origCwd, origHome, origClone, origFetch;
+
+        beforeEach(function() {
+            origCwd = process.cwd();
+            origHome = process.env.HOME;
+            tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-cwd-'));
+            tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-home-'));
+            process.env.HOME = tmpHome;
+            process.chdir(tmpRoot);
+
+            origClone = Git.clone;
+            origFetch = Git.fetchBakerFile;
+
+            // Stand-ins that behave like the real ones: write into the cache
+            // directory the real implementation computes, and nowhere else.
+            Git.clone = async (url) => {
+                const dir = Git.cacheDir(url);
+                fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, 'baker.yml'), 'name: cloned\n');
+                return dir;
+            };
+            Git.fetchBakerFile = async (url) => {
+                const dir = Git.fetchCacheDir(url);
+                fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, 'baker.yml'), 'name: fetched\n');
+                return dir;
+            };
+        });
+
+        afterEach(function() {
+            Git.clone = origClone;
+            Git.fetchBakerFile = origFetch;
+            process.chdir(origCwd);
+            if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
+            fs.rmSync(tmpRoot, { recursive: true, force: true });
+            fs.rmSync(tmpHome, { recursive: true, force: true });
+        });
+
+        const forms = [
+            ['owner/repo shorthand',   'your-org/configs'],
+            ['owner/repo:subdir',      'your-org/configs:units/one'],
+            ['a raw .yml URL',         'https://raw.githubusercontent.com/o/r/main/baker.yml'],
+            ['a gist page URL',        'https://gist.github.com/username/1234567890abcdef'],
+            ['a GitHub tree URL',      'https://github.com/o/r/tree/master/sub'],
+            ['an scp-style remote',    'git@github.com:o/r.git'],
+        ];
+
+        forms.forEach(function([label, source]) {
+            it(`leaves cwd untouched for ${label}`, async function() {
+                const before = fs.readdirSync(tmpRoot);
+                try {
+                    await resolveSource(source);
+                } catch (err) {
+                    // A resolution failure is fine here; littering is not.
+                }
+                expect(fs.readdirSync(tmpRoot)).to.deep.equal(before);
+                expect(fs.readdirSync(tmpRoot)).to.deep.equal([]);
+            });
         });
     });
 });

@@ -19,16 +19,17 @@ baker bake [source]
 
 | Argument | Description |
 |----------|-------------|
-| `source` | Where the `baker.yml` comes from: a directory, a local `.yml` file, `owner/repo`, `owner/repo:file.yml`, or a URL. Omit to use `./baker.yml`. |
+| `source` | Where the `baker.yml` comes from: a directory, `owner/repo`, `owner/repo:subdir`, or a URL. Always resolves to a directory containing a literal `baker.yml`. Omit to use `./baker.yml`. |
 
 ```bash
 baker bake                                # ./baker.yml
 baker bake ~/project                      # a directory containing baker.yml
-baker bake ./python2.yml                  # any .yml file, treated as the baker.yml
 baker bake ottomatica/baker-test          # clone a GitHub repo, use its baker.yml
-baker bake ottomatica/envs:ml.yml         # clone, then use a named top-level file
+baker bake your-org/configs:units/one     # clone, then use the baker.yml in units/one
 baker bake https://gist.github.com/…      # a gist, snippet, or raw file URL
 ```
+
+An address ending in `.yml` is rejected — that form belongs to `baker check`.
 
 An existing local path always wins over the `owner/repo` shorthand. See
 [Configuration sources](configuration-sources.md) for the full resolution order.
@@ -102,9 +103,9 @@ baker check [target]
 | `baker check` | `opunit verify local` | the local machine, using `test/opunit.yml` |
 | `baker check <user>/<repo>:<file.yml>` | `opunit profile <address>` | the local machine, using a checks file fetched from GitHub |
 
-The profile address form (e.g. `chbrown13/profile:5704.yml`) fetches
+The profile address form (e.g. `your-org/profiles:env.yml`) fetches
 `https://raw.githubusercontent.com/<user>/<repo>/master/<file>` and runs it — identical to
-`opunit profile chbrown13/profile:5704.yml`.
+`opunit profile your-org/profiles:env.yml`.
 
 Opunit's output streams through directly, and its exit code is propagated, so
 `baker bake && baker check` works in CI.

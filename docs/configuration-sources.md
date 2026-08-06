@@ -6,9 +6,8 @@ all through a single optional positional argument:
 ```bash
 baker bake                                # ./baker.yml
 baker bake ./path/to/dir                  # a directory containing baker.yml
-baker bake ./env.yml                      # any .yml/.yaml file
 baker bake owner/repo                     # clone a GitHub repo
-baker bake owner/repo:config.yml          # clone, then use a named top-level file
+baker bake owner/repo:units/one           # clone, then use the baker.yml in units/one
 baker bake https://github.com/o/r/tree/…  # a tree URL — clone and use a subdirectory
 baker bake https://gist.github.com/…      # a gist
 baker bake https://…/raw/…/baker.yml      # a raw file
@@ -25,8 +24,6 @@ sees one shape regardless of where the config came from.
 2. **An existing local path** — checked against the filesystem *first*, so a real directory always
    wins over a same-looking GitHub shorthand.
    - A directory: used as-is; errors if it has no `baker.yml`.
-   - A `.yml`/`.yaml` file: used directly if already named `baker.yml`, otherwise staged into a
-     temp directory as `baker.yml`.
    - Any other file: error.
 3. **A URL or `owner/repo` shorthand** — classified by syntax and fetched.
 4. Otherwise: `Could not resolve baker source "<x>"`.
@@ -36,17 +33,22 @@ GitHub shorthand. That's deliberate.
 
 ## GitHub shorthand
 
-`owner/repo` clones `https://github.com/owner/repo.git` into the current directory and uses its
-top-level `baker.yml`.
+`owner/repo` clones `https://github.com/owner/repo.git` into Baker's cache and uses its top-level
+`baker.yml`.
 
-`owner/repo:file.yml` clones the repo and promotes the named file to `baker.yml`, so any playbooks
-or templates it references still resolve alongside it.
+`owner/repo:subdir` clones the repo and uses the `baker.yml` in that subdirectory, so one repo can
+carry many configs without cluttering its root:
+
+```bash
+baker bake your-org/configs:units/one
+baker bake your-org/configs:units/two
+```
 
 Two constraints:
 
-- The file must be at the **top level**. `owner/repo:sub/dir/file.yml` is rejected with an
-  explicit message; sub-directory support is not implemented.
-- The file must end in `.yml` or `.yaml`.
+- The address must name a **directory**, and that directory must contain a literal `baker.yml`.
+- An address ending in `.yml` or `.yaml` is **rejected**, because it names a file — that is
+  `baker check`'s grammar, not `bake`'s. See below.
 
 ## URLs
 
@@ -94,25 +96,42 @@ The older flags still work and bypass the resolver entirely. Use them when you w
 `--box` is not simply an alias for `--local` — it takes a different code path
 (`provider.bakeBox`).
 
-## Shared vocabulary with `baker check`
+## One grammar per verb
 
-The `owner/repo:file.yml` form is the same address syntax opunit uses for profiles.
-`lib/commands/check.js` imports `classifyRemote` from the resolver so `bake` and `check` agree on
-what an address means:
+`bake` and `check` share one classifier but accept **disjoint** address forms. Baker's ends in a
+directory; opunit's ends in `.yml`:
 
 ```bash
-baker bake  ottomatica/envs:ml.yml     # clone repo, bake ml.yml
-baker check chbrown13/profile:5704.yml # opunit profile
+baker bake  your-org/configs:units/one   # a directory containing baker.yml
+baker check your-org/profiles:env.yml    # a profile file, passed to opunit
 ```
 
-## Temporary directories
+`lib/commands/check.js` imports `classifyRemote` from the resolver, so the two vocabularies are
+kept provably disjoint in one place. Giving `bake` a `:file.yml` address is an error that names
+`baker check`, rather than silently doing the wrong thing:
 
-Fetching a single file, or staging a differently-named local `.yml`, creates a directory under
-`tmp/baker-file-<random>` relative to your current working directory.
+```
+your-org/profiles:env.yml addresses a file. `bake` takes a directory containing a
+baker.yml — try owner/repo:path/to/directory
+To run an opunit profile, use: baker check your-org/profiles:env.yml
+```
 
-**These are never cleaned up.** They accumulate across runs. Removing them is safe once the bake
-has finished:
+## The cache
+
+Everything Baker clones or fetches goes under `~/.baker/cache/`, **never your working directory**:
+
+```
+~/.baker/cache/<host>/<owner>/<repo>/   clones
+~/.baker/cache/fetch/<hash>/            single-file fetches (raw URL, gist, snippet)
+```
+
+This matters when you run Baker from inside a repository you care about — nothing is written
+there. Re-running the same address updates the cached clone rather than failing, and local
+modifications inside the cache are discarded on the next run, so a dirtied cache recovers by
+itself.
+
+The cache is disposable. Deleting it costs one re-clone:
 
 ```bash
-rm -rf tmp/baker-file-*
+rm -rf ~/.baker/cache
 ```

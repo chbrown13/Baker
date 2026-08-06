@@ -124,11 +124,13 @@ See [Providers](providers.md) for the trade-offs between the backends.
 
 ```bash
 baker bake ~/projects/thing            # a directory containing baker.yml
-baker bake ./python-env.yml            # any .yml file, treated as the baker.yml
 baker bake ottomatica/baker-test       # clone a GitHub repo, use its baker.yml
-baker bake ottomatica/envs:ml.yml      # clone a repo, use a named top-level file
+baker bake your-org/configs:units/one  # clone a repo, use the baker.yml in units/one
 baker bake https://gist.github.com/... # a gist, snippet, or raw file URL
 ```
+
+Whatever you point at, the file Baker reads is named `baker.yml`. Clones and fetches land in
+`~/.baker/cache/`, never in your working directory.
 
 See [Configuration sources](configuration-sources.md) for the full resolution order.
 

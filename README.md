@@ -7,18 +7,15 @@ See a running demo below:
   <img src="./docs/img/demo.gif">
 </p>
 
-For more details, checkout [docs.getbaker.io](https://docs.getbaker.io/) and join our [Slack](https://getbaker.io/slack).
-
 ## Install from source
 
 ``` bash
-git clone https://github.com/ottomatica/Baker
+git clone https://github.com/chbrown13/Baker
 cd Baker
 npm install
 npm link
 ```
 
-Also see other [binary installation options](https://docs.getbaker.io/installation/).
 ## Using Baker
 
 Baker uses a configuration file (baker.yml) in the root directory of you project. This is an example of a baker.yml file. By running `baker bake` Baker provisions a VM with nodejs installed, and the specified ip address and port forwarding rules configured for you. You can access the VM by running `baker ssh` or run commands inside the VM with `baker run <Command Name>`. Your code is accessible in the VM via a shared folder.
@@ -135,11 +132,14 @@ Installs are idempotent — re-baking an environment that already has the tool i
 ``` bash
 baker bake                              # ./baker.yml in the current directory
 baker bake ./path/to/dir                # a directory containing baker.yml
-baker bake ./env.yml                    # any .yml/.yaml file (treated as the baker file)
 baker bake owner/repo                   # clone a GitHub repo with a top-level baker.yml
-baker bake owner/repo:config.yml        # clone a repo and use a named top-level .yml file
+baker bake owner/repo:units/one         # clone a repo and use the baker.yml in units/one
 baker bake https://.../tree/...         # tree URL, gist, snippet, or raw file URL
 ```
+
+`bake` always resolves to a directory containing a literal `baker.yml`. An address ending in
+`.yml` is rejected, because that form belongs to `baker check`. Clones and fetches go to
+`~/.baker/cache/`, never your working directory.
 
 Local paths always win over GitHub shorthand, so a real `./owner/repo` directory is used as-is. The explicit `--local`, `--repo`, `--file`, and `--box` flags still work as overrides.
 

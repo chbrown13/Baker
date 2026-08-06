@@ -69,14 +69,20 @@ constructor` rather than reporting an unimplemented bakelet.
 
 `services/lxd/lxd.yml` exists as a playbook but has no bakelet class, so it can't be selected.
 
-### Temp directories accumulate
+### Clearing the source cache
 
-Single-file sources (gists, raw URLs, differently-named local `.yml` files) stage into
-`tmp/baker-file-<random>` under your current directory, and nothing removes them.
+Clones and single-file fetches are cached under `~/.baker/cache/`. Nothing prunes it, but nothing
+in it is precious either — deleting it costs one re-clone:
 
 ```bash
-rm -rf tmp/baker-file-*
+rm -rf ~/.baker/cache
 ```
+
+If a cache directory exists but is not a Baker clone, `bake` refuses and names the path rather than
+overwriting it. Removing that path and re-running is the fix.
+
+*(Older versions staged into `tmp/baker-file-<random>` under your working directory. If you have
+leftovers from one, `rm -rf tmp/baker-file-*` is safe.)*
 
 ### `destroy` doesn't reverse a local bake
 
@@ -160,14 +166,20 @@ The `remote:` block is missing `ip`, `user`, or `private_key`. All three are req
 npm install -g ottomatica/opunit
 ```
 
-### `Sub-directory paths (owner/repo:sub/file.yml) are not supported yet`
+### `<address> addresses a file. bake takes a directory containing a baker.yml`
 
-Only top-level files work with the shorthand. Clone the repo and use `baker bake <dir>`, or use a
-tree URL:
+`bake` resolves to a **directory**; an address ending in `.yml` is `baker check`'s grammar. Point
+at the directory holding the `baker.yml` instead:
 
 ```bash
-baker bake https://github.com/owner/repo/tree/master/subdir
+baker bake  owner/repo:units/one     # not owner/repo:one.yml
+baker check owner/profiles:one.yml   # the .yml form belongs here
 ```
+
+### `No baker.yml in "<subdir>" of <repo>`
+
+The subdirectory resolved, but has no `baker.yml` in it. The error names the exact path Baker
+looked in. Each config directory needs its own literal `baker.yml`.
 
 ### Docker: permission denied on `/var/run/docker.sock`
 
