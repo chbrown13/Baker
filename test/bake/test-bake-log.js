@@ -116,6 +116,44 @@ describe('bake failure reporting', function() {
             expect(msg.indexOf('system')).to.be.lessThan(msg.indexOf('target not found'));
         });
 
+        it('leads with the bakelet own message for an authored error', function() {
+            // Baker's own checks already explain themselves; burying that under
+            // "command failed" and a pointer to a log is the wrong trade.
+            const msg = BakeLog.describeFailure({
+                bakeletName: 'files',
+                authored: 'source not found: /course/base/x.md\n  (resolved from src: "x.md")'
+            });
+            expect(msg).to.contain('source not found');
+            expect(msg).to.contain('resolved from');
+            expect(msg).to.not.contain('command failed');
+        });
+
+        it('does not stutter when the bakelet prefixes its own name', function() {
+            const msg = BakeLog.describeFailure({
+                bakeletName: 'files', authored: 'files: source not found: /x/y.md'
+            });
+            expect(msg).to.contain('✗ files: source not found');
+            expect(msg).to.not.contain('files: files:');
+        });
+
+        it('omits the last shell command for an authored error', function() {
+            const msg = BakeLog.describeFailure({
+                bakeletName: 'files', authored: 'dest resolves outside the environment root',
+                command: 'mkdir -p /some/unrelated/path', output: 'irrelevant'
+            });
+            expect(msg).to.not.contain('mkdir -p');
+            expect(msg).to.not.contain('irrelevant');
+        });
+
+        it('distinguishes a command failure from an authored one', function() {
+            const shellError = new Error('Command failed');
+            shellError.status = 1;
+            shellError.stderr = 'target not found';
+            expect(BakeLog.isCommandFailure(shellError)).to.equal(true);
+            expect(BakeLog.isCommandFailure(new Error('source not found'))).to.equal(false);
+            expect(BakeLog.isCommandFailure(null)).to.equal(false);
+        });
+
         it('redacts secrets from the terminal message too (AC-31)', function() {
             const msg = BakeLog.describeFailure({
                 bakeletName: 'env', command: 'export TOKEN="sk-livekey123"',
