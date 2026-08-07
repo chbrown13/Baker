@@ -1,6 +1,6 @@
 # Baker 🍞 
 
-Meet Baker! -- a simple tool for provisioning virtual machines and containers. With Baker you can quickly create development environments and run your code. With one tool, you have the functionality of vagrant, docker, ansible, and task runners like grunt.
+Meet Baker! Baker sets up development environments from one configuration file (`baker.yml`), so everyone in a group ends up with the same setup — and can verify and clean up their environment afterwards.
 
 See a running demo below:
 <p align="center">
@@ -18,7 +18,7 @@ npm link
 
 ## Using Baker
 
-Baker uses a configuration file (baker.yml) in the root directory of you project. This is an example of a baker.yml file. By running `baker bake` Baker provisions a VM with nodejs installed, and the specified ip address and port forwarding rules configured for you. You can access the VM by running `baker ssh` or run commands inside the VM with `baker run <Command Name>`. Your code is accessible in the VM via a shared folder.
+Baker uses a configuration file (baker.yml) in the root directory of you project. Below is an example of a baker.yml file. By running `baker bake` Baker installs the toolchain, places prepared configuration into projects, verifies the result, and can revert your system after completing activities. It can be run against your own machine, a Docker container, or a remote host via SSH using the same config for Linux, macOS, and Windows.
 
 ``` yaml
 ---
