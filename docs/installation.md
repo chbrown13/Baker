@@ -5,7 +5,7 @@
 ### From source
 
 ```bash
-git clone https://github.com/ottomatica/Baker
+git clone <this-repo>
 cd Baker
 npm install
 npm link
@@ -30,28 +30,31 @@ npm run package-linux   # builds a .deb into installers/linux/deb/
 npm run package-macos   # builds a macOS package
 ```
 
-Note that the `pkg` targets are pinned to Node 10. The binaries bundle `config/`, `remotes/`, and
-`lib/`, so bakelet playbooks ship inside the executable.
+The `pkg` targets are pinned to Node 10. The binaries bundle `config/`, `remotes/`, and `lib/`, so
+bakelet playbooks ship inside the executable.
 
 ## Runtime requirements
 
-Baker itself needs **Node.js >= 7.10.0**. Everything else depends on which provider you use — you
-only need the dependencies for the providers you actually run.
+Baker itself needs **Node.js >= 7.10.0**. Everything else depends on what your `baker.yml` asks
+for.
 
 | Dependency | Required by |
 |------------|-------------|
-| **Ansible** (on the host) | `local:`, `docker:`, `remote:` |
-| **Ansible** (on `baker-srv`) | `vm:`, `vagrant:`, `container:` — installed for you |
-| **Docker** | `docker:`, `container:` |
-| **VirtualBox** | `vm:`, `vagrant:`, and `baker-srv` on Linux/Windows |
-| **Vagrant** | `vagrant:` |
+| **A package manager** | any bake — apt, dnf, pacman, zypper, apk, brew, or choco |
+| **Ansible** (on the host) | only `lang:`, `services:`, `custom:`, and `tools: jekyll`/`dazed`/`defects4j` |
+| **Docker** | the `docker:` provider |
+| **SSH access** | the `remote:` provider |
 | **git** | cloning `baker.yml` sources, the `resources: git` bakelet, agentic config repos |
 | **opunit** | `baker check` only |
 
-### Ansible
+Most configs need **neither Ansible nor sudo**. The portable tier — `files:`, `tools:`, `env:`,
+`config:`, `packages:`, `resources:`, `start:` — runs as plain commands through whichever
+package manager the target has. That is what makes native Windows possible.
 
-The host-direct providers (`local`, `docker`, `remote`) run `ansible-playbook` from your machine,
-so Ansible must be installed and on your `PATH`:
+A bake that asks for a playbook-backed section on a non-Linux target is **refused before anything
+runs**, rather than failing partway through.
+
+### Ansible (only if you need it)
 
 ```bash
 # Fedora / RHEL
@@ -67,8 +70,6 @@ brew install ansible
 pipx install ansible
 ```
 
-The control-VM providers do **not** need Ansible on the host — it lives on `baker-srv` instead.
-
 ### opunit (optional)
 
 Only needed for `baker check`:
@@ -77,11 +78,16 @@ Only needed for `baker check`:
 npm install -g ottomatica/opunit
 ```
 
-## Provider-specific setup
+## Per-provider setup
 
-### Local provider
+### `local:`
 
-Bakelet playbooks run with `become: yes`, so the target account needs **passwordless sudo**:
+Nothing to install beyond a package manager. Individual package managers may prompt for `sudo`;
+Baker computes whether to prefix commands with `sudo` from the target's user id, so running as
+root — in a container, for instance — works without one.
+
+**If your config uses the playbook-backed sections**, those still run with `become: yes`, so the
+account needs passwordless sudo:
 
 ```bash
 sudo visudo
@@ -89,11 +95,14 @@ sudo visudo
 your-username ALL=(ALL) NOPASSWD: ALL
 ```
 
-Without this, bakelets fail with `sudo: a password is required`. See
-[Troubleshooting](troubleshooting.md#sudo-in-host-direct-modes) — this is a known limitation, not
-a misconfiguration on your part.
+Without it, those bakelets fail with `sudo: a password is required`. See
+[Troubleshooting](troubleshooting.md#sudo-and-the-playbook-backed-tier) — a known limitation of
+that tier, not a misconfiguration.
 
-### Docker provider (`docker:`)
+On **Windows**, Chocolatey cannot self-elevate, so a bake needing it is refused unless the shell is
+already Administrator. Nothing is written when that check fails.
+
+### `docker:`
 
 Baker talks to your local Docker daemon over `/var/run/docker.sock`, or `DOCKER_HOST` if set. Your
 user needs permission to reach the socket:
@@ -102,45 +111,30 @@ user needs permission to reach the socket:
 sudo usermod -aG docker $USER   # then log out and back in
 ```
 
-Ansible reaches into the container with `ansible_connection=docker`, so Ansible must be on the
-host, not in the image.
+The target platform is detected **inside the container**, so a macOS host baking into an Ubuntu
+image resolves `apt`.
 
-### Control-VM providers (`vm:`, `container:`, `vagrant:`)
+### `remote:`
 
-These provision *through* a small Alpine control VM named `baker-srv`, which Baker installs the
-first time you bake. On Linux and Windows that VM runs under VirtualBox. On macOS it runs under
-HyperKit by default (pass `--forceVirtualBox` to override).
-
-Install it explicitly with:
-
-```bash
-baker setup           # or: baker setupmac    on macOS
-baker setup --force   # destroy and recreate
-```
-
-`baker setup` validates that VirtualBox and Vagrant are present before installing. See
-[Providers](providers.md#the-baker-srv-control-vm) for what the VM actually does.
+You need SSH access with a key. For the playbook-backed sections, the remote account also needs
+passwordless sudo — normally unremarkable on a server you administer.
 
 ## Where Baker keeps state
 
 | Path | Contents |
 |------|----------|
-| `~/.baker/` | Per-environment directories, boxes, SSH keys |
-| `~/.baker/baker_rsa` | Private key used to reach `baker-srv` and provisioned VMs |
-| `~/.baker/data/index.json` | Registry of known environments (name, path, type, connection info) |
-| `~/.baker/ansible-srv/` | Vagrant working directory for the Ansible control VM |
-| `~/Library/Baker/BakerForMac/` | macOS-only: HyperKit binaries, kernel, filesystem image |
+| `~/.baker/` | Per-environment state directories |
+| `~/.baker/cache/` | Resolved `baker.yml` sources, keyed by host and repo path |
+| `~/.baker/bake.log` | Failure output, with `env:` values redacted |
+| `~/.baker/cleanup.log` | What `baker cleanup` removed, with a restore hint per item |
+| `~/.baker/data/index.json` | Registry of known environments |
 
-Configuration such as cached vault passphrases lives in a
-[configstore](https://github.com/yeoman/configstore) file under your platform's standard config
-directory.
+**Everything Baker records stays on the machine it runs on.** There is no telemetry and nothing is
+transmitted anywhere.
 
 ## Verify the install
 
 ```bash
 baker --version
-baker status        # checks hardware virtualization, lists environments
+baker bake --help
 ```
-
-`baker status` reports whether VT-x/AMD-V is available and enumerates every environment Baker
-knows about across VirtualBox, runc, local, and Docker.

@@ -1,35 +1,34 @@
 # Baker 🍞
 
-Baker provisions development environments from a declarative `baker.yml` file. You describe what
+Baker configures development environments from a declarative `baker.yml` file. You describe what
 an environment needs — languages, tools, services, packages, config files — and `baker bake`
-builds it against whatever substrate you have available: your own machine, a Docker container, a
-VM, or a remote server.
+builds it against one of three targets: your own machine, a Docker container, or a remote server
+over SSH.
 
-It combines the roles of Vagrant, Docker, Ansible, and a task runner into a single tool with one
-config file.
+The same config works on Linux, macOS, and Windows. Baker installs packages with whatever package
+manager the target has.
 
 ```yaml
 name: dev-env
 local: {}
-lang:
-  - python3
 tools:
   - jupyter
+packages:
+  - jq
 start: jupyter notebook --no-browser
 ```
 
 ```bash
-baker bake      # provision it
-baker ssh       # get a shell in it
-baker run test  # run a command inside it
-baker destroy   # tear it down
+baker bake      # configure it
+baker check     # verify the result
+baker cleanup   # undo what the bake placed
 ```
 
 ## Documentation
 
 **Getting started**
 
-- [Installation](installation.md) — install Baker and the per-provider prerequisites
+- [Installation](installation.md) — install Baker and the per-target prerequisites
 - [Getting started](getting-started.md) — build your first environment end to end
 - [Core concepts](concepts.md) — environments, providers, bakelets, and execution modes
 
@@ -37,7 +36,7 @@ baker destroy   # tear it down
 
 - [`baker.yml` reference](baker-yml-reference.md) — every key in the config file
 - [CLI reference](baker-commands.md) — every command and flag
-- [Providers](providers.md) — the eight provisioning backends and how one gets selected
+- [Providers](providers.md) — the three targets and how one gets selected
 - [Bakelets](bakelets.md) — the catalog of installable units
 - [Configuration sources](configuration-sources.md) — the ways `baker bake` can find a `baker.yml`
 
@@ -47,25 +46,35 @@ baker destroy   # tear it down
 - [Extending Baker](extending.md) — writing custom bakelets and providers
 - [Troubleshooting](troubleshooting.md) — known issues, limitations, and common failures
 
-## Which provider do I want?
+## Which target do I want?
 
-Baker picks a provider from the top-level key in your `baker.yml`. The short version:
+Baker picks a provider from the top-level key in your `baker.yml`:
 
 | You want | Use | Needs |
 |----------|-----|-------|
-| Set up your own machine or a CI runner | `local:` | Ansible, passwordless sudo |
-| A throwaway container on your existing Docker | `docker:` | Docker, Ansible |
-| A full VM with its own IP and port forwarding | `vm:` | VirtualBox |
-| To configure a server you already have | `remote:` | Ansible, SSH access |
+| Set up the machine you are sitting at, or a CI runner | `local:` | A package manager |
+| A throwaway container on your existing Docker | `docker:` | Docker |
+| To configure a server you already have | `remote:` | SSH access |
 
-See [Providers](providers.md) for the complete list, including the control-VM-based backends
-(`container:`, `vagrant:`) and DigitalOcean.
+Most sections — `files:`, `tools:`, `env:`, `config:`, `packages:`, `resources:`, `start:` — need
+neither Ansible nor sudo. Only `lang:`, `services:`, and `custom:` do, and those require a Linux
+target. See [Providers](providers.md).
+
+## What Baker records
+
+Baker writes only under `~/.baker/` — resolved sources in `cache/`, a `bake.log`, and
+per-environment state. **Nothing is transmitted anywhere.** There is no telemetry and no
+phone-home; everything Baker records stays on the machine it runs on.
 
 ## Project status
 
 Baker was originally built by [Ottomatica](https://github.com/ottomatica/Baker) and is now
-maintained here for personal and learning use. There are no backward-compatibility obligations to
-upstream, but the `baker` name and the `baker.yml` schema are kept intact.
+maintained here. There are no backward-compatibility obligations to upstream, but the `baker` name
+and the `baker.yml` schema are kept intact.
+
+Baker previously supported VirtualBox, Vagrant, runc, and DigitalOcean, and provisioned through a
+control VM called `baker-srv`. **All of that was removed.** Configs using `vm:`, `vagrant:`,
+`container:`, or `persistent:` are rejected with a message naming the three supported keys.
 
 The upstream documentation site (`docs.getbaker.io`) is stale. **These pages are the current
 source of truth.**

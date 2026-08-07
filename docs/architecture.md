@@ -6,18 +6,19 @@ Internals, aimed at contributors. For the user-level model see [Core concepts](c
 
 ```
 baker.js                        CLI entry point — yargs, .commandDir('./lib/commands')
-global-vars.js                  Shared paths (~/.baker, bakelets, remotes) and baker-srv SSH config
+global-vars.js                  Shared paths (~/.baker, bakelets, remotes)
 
 lib/
   commands/                     One file per CLI command (yargs command modules)
   modules/
     baker.js                    Baker class + chooseProvider()
-    servers.js                  baker-srv lifecycle (VirtualBox and macOS HyperKit)
     ssh.js                      SSH/SCP helpers over ssh2 and scp2
-    vault.js, validator.js      Ansible Vault, baker.yml validation
+    platform.js                 Package-manager detection against the target
+    preflight.js                Elevation + Ansible gate, run before any bakelet
+    bake-log.js                 Failure wrapping, ~/.baker/bake.log, redaction
+    validator.js                baker.yml validation
     print.js, spinner.js        Output helpers
     configstore.js              Persistent settings
-    clusters/cluster.js         Multi-machine cluster support
     init/interactive.js         `baker init` prompts
     configuration/ansible.js    Four families of Ansible invocation
     utils/
@@ -26,16 +27,16 @@ lib/
       utils.js                  Env index, prompts, file helpers
     providers/
       provider.js               Base class
-      local.js  docker-local.js remote.js
-      virtualbox.js  vagrant.js  docker.js  runc.js  digitalocean.js
+      local.js  docker-local.js  remote.js
   bakelets/
-    bakelet.js                  Base class: copy() / exec() and setters
+    bakelet.js                  Base class: copy() / exec() / execCapture(),
+                                command tables, requiresAnsible, requiresElevation
     resolve.js                  Dispatcher — the heart of the system
     custom.js  start.js
     lang/ tools/ services/ packages/ config/ resources/ env/
 
 remotes/bakelets-source/        Ansible playbooks and Mustache templates
-config/                         Default SSH keys, Vagrantfile templates, baker-srv assets
+config/                         Templates
 test/bake/                      Mocha suites (npm test)
 test/integration/               Integration suites (npm run int-test)
 ```
@@ -49,34 +50,38 @@ A typical `baker bake` proceeds:
 
 ```
 bake.js handler
-  └─ resolveSource(source)              → a directory containing baker.yml
+  └─ resolveSource(source)              → a directory containing baker.yml (under ~/.baker/cache)
   └─ Baker.chooseProvider(bakePath)     → {envName, provider, BakerObj, doc}
-  └─ [control-VM providers only]
-       Servers.installBakerServer()     → ensure baker-srv exists and is running
+       └─ throws on a retired key, an empty file, or no recognised key
   └─ BakerObj.bake(bakePath, …)         → provider.bake(...)
-       └─ provider-specific setup       (create VM / pull image / mkdir on remote)
-       └─ resolveBakelet(...)           → run every bakelet
-  └─ [control-VM providers only]
-       BakerObj.exposePorts(...)
+       └─ provider-specific setup       (pull image / mkdir on remote)
+       └─ resolveBakelet(...)
+            └─ makeTransport()          → one {copy, exec, execCapture} for the bake
+            └─ constructBakelet() × n   → build without running
+            └─ Preflight.check()        → refuse an impossible bake, change nothing
+            └─ run each bakelet's load() then install()
 ```
 
-The `Baker` class is a thin delegator: `ssh`, `start`, `stop`, `delete`, and `bake` forward
-straight to the provider. The interesting logic is in `chooseProvider` and in the providers.
+The `Baker` class is a thin delegator: `ssh`, `delete`, `bake`, `planRemoval`, and `applyRemoval`
+forward straight to the provider. The interesting logic is in `chooseProvider` and the providers.
 
 ### Provider selection
 
-`Baker.chooseProvider()` is a single chained ternary over the parsed YAML:
+`Baker.chooseProvider()` checks retired keys first, then the three live ones:
 
 ```js
+let retired = Object.keys(RETIRED_ENV_KEYS).find(key => doc[key]);
+if (retired) throw new Error(Baker.retiredEnvMessage(retired));
+
 let envType = doc.docker ? 'docker-local'
             : doc.local ? 'local'
-            : doc.container || doc.persistent ? 'container'
-            : doc.vm || doc.vagrant ? 'vm'
             : doc.remote ? 'remote'
             : 'other';
 ```
 
-The order is the priority order. `--useContainer` and `--useVM` override the result afterward.
+Retired keys are tested first deliberately: a config carrying both `local:` and `vm:` gets the
+specific explanation rather than silently ignoring the dead half. `'other'` throws too, so the
+function never returns a null provider. There are no override flags.
 
 ## The provider contract
 
@@ -86,8 +91,8 @@ Providers extend `lib/modules/providers/provider.js` and implement:
 |--------|---------|
 | `bake(scriptPath, ansibleSSHConfig, verbose)` | Create the target, then run bakelets against it |
 | `ssh(name, cmdToRun, terminate, verbose, options)` | Interactive shell, or run one command |
-| `start(name)` / `stop(name)` / `delete(name)` | Lifecycle |
-| `getState(name)` | `'running'` \| `'stopped'` |
+| `delete(name)` | Tear down the target |
+| `planRemoval` / `applyRemoval` | The `baker cleanup` seam — `planRemoval` must be side-effect free |
 | `list()` | Print a table of this provider's environments |
 | `getSSHConfig(name)` | Connection details |
 
@@ -106,7 +111,9 @@ await resolveB.resolveBakelet(…, verbose, null, null, name);
 ```
 
 The three trailing parameters — `localLocation`, `remoteSSHConfig`, `dockerContainer` — are
-mutually exclusive. Whichever is truthy selects the mode; all three absent means control-VM mode.
+mutually exclusive. Whichever is truthy selects the mode. All three absent is now unreachable: it
+was the control-VM path, and `makeTransport()` throws
+`no transport for this environment: expected local:, docker:, or remote:.` if it ever happens.
 
 ## The bakelet dispatcher
 
@@ -137,10 +144,12 @@ to the mode:
 | local | `fs.copy` into `localLocation` | `execSync` with cwd = `localLocation` |
 | remote | `Ssh.copyFromHostToVM` | `Ssh.sshExec` |
 | docker | `docker cp` | `docker exec … /bin/bash -c '<cmd>'` |
-| control-VM | *(inherited)* `Ssh.copyFromHostToVM` to baker-srv | *(inherited)* `Ssh.sshExec` |
 
 Local mode also rewrites paths: any occurrence of `/home/vagrant/baker/<name>/` in a command is
-replaced with the real local location, because bakelets hardcode the control-VM staging path.
+replaced with the real local location, because bakelets still address the target using that
+staging path. The rewrite uses `path.sep` rather than a hardcoded `/`, so it works on a Windows
+drive path, and a function replacement so a `$` in the path is not read as a capture-group
+reference.
 
 For remote and docker modes the resolver additionally **monkey-patches the static methods on the
 `Ansible` module** for the duration of the install, then restores them:
@@ -166,7 +175,6 @@ mirror each other:
 
 | Transport | Inventory | Invocation |
 |-----------|-----------|------------|
-| **control-VM** | `baker_inventory` file on baker-srv | `Ssh.sshExec("cd /home/vagrant/baker/<name> && ansible-playbook …")` |
 | **local** | `"localhost,"` with `-c local` | `execSync` in the working directory |
 | **remote** | inline: `<host> ansible_connection=ssh ansible_user=… ansible_ssh_private_key_file=…` | `execSync` on the host |
 | **docker** | inline: `<container> ansible_connection=docker ansible_user=root` | `execSync` on the host |

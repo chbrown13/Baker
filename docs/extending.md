@@ -111,7 +111,7 @@ Before `load()` is called, the resolver populates:
 **Use `this.copy()` and `this.exec()`, never `Ssh.*` directly.** These two methods are rebound per
 execution mode, and they are the only reason one bakelet works across host, container, VM, and
 remote targets. Calling `Ssh.copyFromHostToVM` yourself hardcodes the control-VM transport and
-breaks local and docker modes — which is exactly the bug the built-in `config/keys` and
+breaks local and docker modes — which is exactly the bug the built-in `config/template` and
 `config/template` bakelets have.
 
 **Avoid single quotes in any command string.** Docker mode wraps commands as
@@ -278,22 +278,14 @@ If it needs a **new** transport, you have more work: add `patchAnsibleForX` / `u
 in `resolve.js`, add a matching family of methods in `lib/modules/configuration/ansible.js`, and
 add a `copy`/`exec` rebinding branch in both `resolve()` and `resolveCustom()`.
 
-### 4. Bypass guards
+### 4. Removal support
 
-If your provider does **not** use `baker-srv`, add it to the `instanceof` guards in
-`lib/commands/bake.js` and `lib/commands/destroy.js`, or Baker will install a control VM you don't
-need:
+Implement `planRemoval` and `applyRemoval` if the provider should work with `baker cleanup`.
+`planRemoval` **must be side-effect free** — it is called to render a plan the user then approves,
+and `--dry-run` relies on it changing nothing.
 
-```js
-if (!(provider instanceof LocalProvider) &&
-    !(provider instanceof RemoteProvider) &&
-    !(provider instanceof DockerLocalProvider)) {
-    await Servers.installBakerServer(forceVirtualBox);
-}
-```
-
-This growing chain of checks is a known wart — a `provider.usesControlVM` flag would be the
-cleaner shape if you're touching it anyway.
+A provider without them is refused by `cleanup` with a message naming the three that have them,
+rather than half-removing an environment.
 
 ## Adding a CLI command
 
@@ -318,5 +310,6 @@ exports.handler = async function (argv) {
 };
 ```
 
-`lib/commands/command.example.js` is a skeleton in the tree. Note that yargs runs in `strict(true)`
-mode, so unknown flags are rejected.
+Note that yargs runs in `strict(true)` mode, so unknown flags are rejected. Because `.commandDir()`
+registers every file in `lib/commands/`, a scratch or template file placed there becomes a real
+command in `--help` — there is no skeleton file in the tree for that reason.

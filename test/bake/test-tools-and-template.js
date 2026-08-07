@@ -214,73 +214,6 @@ describe('config: template', function() {
     });
 });
 
-describe('config: keys uses the injected transport', function() {
-    const Keys = require('../../lib/bakelets/config/keys');
-    const { privateKey } = require('../../global-vars');
-
-    function make() {
-        // ansibleSSHConfig null is exactly the local/docker case that used to
-        // make the direct Ssh.copyFromHostToVM call a silent no-op.
-        const bakelet = new Keys('testenv', null, '');
-        bakelet.setRemotesPath('/remotes');
-        const copies = [];
-        bakelet.copy = async (src, dest) => { copies.push({ src, dest }); };
-        return { bakelet, copies };
-    }
-
-    it('copies one key per client through this.copy', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: ['alice', 'bob'] }, []);
-        const keyCopies = copies.filter(c => c.src === privateKey);
-        expect(keyCopies).to.have.lengthOf(2);
-    });
-
-    it('names each destination after the client', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: ['alice'] }, []);
-        expect(copies[0].dest).to.contain('alice_id_rsa');
-    });
-
-    it('copies the private key rather than an arbitrary source', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: ['alice'] }, []);
-        expect(copies[0].src).to.equal(privateKey);
-    });
-
-    it('still copies the playbook alongside the keys', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: ['alice'] }, []);
-        expect(copies.some(c => String(c.src).indexOf('keys') !== -1)).to.be.true;
-    });
-
-    it('pushes the client key names into the playbook variables', async function() {
-        const { bakelet } = make();
-        const variables = [];
-        await bakelet.load({ keys: ['alice', 'bob'] }, variables);
-        const entry = variables.find(v => v.baker_client_keys);
-        expect(entry.baker_client_keys).to.deep.equal(['alice_id_rsa', 'bob_id_rsa']);
-    });
-
-    it('does nothing when keys is not a list', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: 'alice' }, []);
-        expect(copies).to.deep.equal([]);
-    });
-
-    it('does nothing for an empty key list beyond the playbook', async function() {
-        const { bakelet, copies } = make();
-        await bakelet.load({ keys: [] }, []);
-        expect(copies.filter(c => c.src === privateKey)).to.deep.equal([]);
-    });
-
-    it('no longer requires the ssh module directly', function() {
-        const source = fs.readFileSync(
-            path.join(__dirname, '..', '..', 'lib', 'bakelets', 'config', 'keys.js'), 'utf8');
-        expect(source).to.not.contain("require('../../modules/ssh')");
-        expect(source).to.not.contain('await Ssh.');
-    });
-});
-
 describe('start: does not block the bake', function() {
     const { startDetached, dockerStartCommand } = require('../../lib/bakelets/resolve');
 
@@ -329,5 +262,221 @@ describe('start: does not block the bake', function() {
         const child = startDetached('sleep 5', os.tmpdir());
         expect(child.pid).to.be.a('number');
         child.kill();
+    });
+});
+
+describe('cohort toolchain bakelets', function() {
+    const Node    = require('../../lib/bakelets/tools/node');
+    const Opunit  = require('../../lib/bakelets/tools/opunit');
+    const BakerT  = require('../../lib/bakelets/tools/baker');
+    const DockerX = require('../../lib/bakelets/tools/docker-extension');
+
+    describe('node', function() {
+        it('installs the runtime and npm together on apt', async function() {
+            const calls = await run(Node, LINUX, 'node');
+            expect(calls[0]).to.contain('command -v node');
+            expect(calls[0]).to.contain('sudo apt-get install -y nodejs npm');
+        });
+
+        it('uses the detected manager', async function() {
+            expect((await run(Node, FEDORA, 'node'))[0]).to.contain('dnf install -y nodejs npm');
+        });
+
+        it('drops sudo when the target is root', async function() {
+            expect((await run(Node, ROOT, 'node'))[0]).to.not.match(/\bsudo\b/);
+        });
+
+        it('never runs brew under sudo, and brew bundles npm', async function() {
+            const cmd = (await run(Node, MACOS, 'node'))[0];
+            expect(cmd).to.not.match(/\bsudo\b/);
+            expect(cmd).to.contain('brew install node');
+        });
+
+        it('uses PowerShell constructs on Windows', async function() {
+            expect((await run(Node, WINDOWS, 'node'))[0]).to.contain('Get-Command node');
+        });
+
+        it('supports every manager Baker detects', function() {
+            const n = new Node('e', null, '');
+            expect(Object.keys(n.commands).sort()).to.deep.equal(
+                ['apk', 'apt', 'brew', 'choco', 'dnf', 'pacman', 'zypper']);
+        });
+    });
+
+    describe('opunit', function() {
+        it('installs through npm with an idempotency guard', async function() {
+            const calls = await run(Opunit, LINUX, 'opunit');
+            expect(calls[0]).to.contain('command -v opunit');
+            expect(calls[0]).to.contain('npm install -g ottomatica/opunit');
+        });
+
+        it('uses the same npm line on every manager', function() {
+            const o = new Opunit('e', null, '');
+            const values = Object.keys(o.commands).map(k => o.commands[k]);
+            expect(new Set(values).size).to.equal(1);
+        });
+
+        it('never runs npm under sudo', async function() {
+            expect((await run(Opunit, LINUX, 'opunit'))[0]).to.not.match(/\bsudo\b/);
+        });
+
+        it('declares no elevation requirement', function() {
+            expect(new Opunit('e', null, '').requiresElevation).to.be.false;
+        });
+    });
+
+    describe('baker', function() {
+        async function runBaker(platform, entry) {
+            const b = new BakerT('e', null, '');
+            b.platform = platform;
+            b.setBakeletName('baker');
+            const calls = [];
+            b.exec = async (cmd) => { calls.push(cmd); };
+            await b.load(entry, []);
+            await b.install();
+            return calls;
+        }
+
+        it('installs from an explicit source', async function() {
+            const calls = await runBaker(LINUX, { baker: { source: 'your-org/Baker' } });
+            expect(calls[0]).to.contain('npm install -g your-org/Baker');
+        });
+
+        it('accepts the string shorthand', async function() {
+            const calls = await runBaker(LINUX, { baker: 'your-org/Baker' });
+            expect(calls[0]).to.contain('npm install -g your-org/Baker');
+        });
+
+        it('guards on the baker binary', async function() {
+            const calls = await runBaker(LINUX, { baker: 'your-org/Baker' });
+            expect(calls[0]).to.contain('command -v baker');
+        });
+
+        it('refuses to guess a source', async function() {
+            let err = null;
+            try {
+                await runBaker(LINUX, 'baker');
+            } catch (e) { err = e; }
+            expect(err, 'a sourceless baker entry should be rejected').to.not.be.null;
+            expect(err.message).to.contain('needs a source');
+        });
+
+        it('explains why there is no default', async function() {
+            let err = null;
+            try { await runBaker(LINUX, { baker: {} }); } catch (e) { err = e; }
+            expect(err.message).to.contain('unrelated package');
+        });
+    });
+
+    describe('docker-extension', function() {
+        function make(entry, { listFails = false } = {}) {
+            const x = new DockerX('e', null, '');
+            x.platform = LINUX;
+            x.setBakeletName('docker-extension');
+            const calls = [];
+            x.exec = async (cmd) => { calls.push(cmd); };
+            x.execCapture = async (cmd) => {
+                if (listFails) throw new Error('Cannot connect to the Docker daemon');
+                return '';
+            };
+            return { x, calls, entry };
+        }
+
+        it('installs the named extension, guarded by a listing check', async function() {
+            const { x, calls } = make();
+            await x.load({ 'docker-extension': { address: 'org/ext' } }, []);
+            await x.install();
+            expect(calls[0]).to.contain('docker extension ls');
+            expect(calls[0]).to.contain('docker extension install org/ext');
+        });
+
+        it('accepts the string shorthand', async function() {
+            const { x, calls } = make();
+            await x.load({ 'docker-extension': 'org/ext' }, []);
+            await x.install();
+            expect(calls[0]).to.contain('org/ext');
+        });
+
+        it('fails actionably when Docker Desktop is not running', async function() {
+            const { x } = make(null, { listFails: true });
+            await x.load({ 'docker-extension': 'org/ext' }, []);
+            let err = null;
+            try { await x.install(); } catch (e) { err = e; }
+            expect(err, 'an unreachable Desktop should be reported').to.not.be.null;
+            expect(err.message).to.contain('Docker Desktop is not available');
+        });
+
+        it('tells the user both how to start it and how to install it', async function() {
+            const { x } = make(null, { listFails: true });
+            await x.load({ 'docker-extension': 'org/ext' }, []);
+            let err = null;
+            try { await x.install(); } catch (e) { err = e; }
+            expect(err.message).to.contain('start it and re-run');
+            expect(err.message).to.contain('docs.docker.com/desktop');
+        });
+
+        it('does not attempt the install when Desktop is unavailable', async function() {
+            const { x, calls } = make(null, { listFails: true });
+            await x.load({ 'docker-extension': 'org/ext' }, []);
+            try { await x.install(); } catch (e) { /* expected */ }
+            expect(calls).to.deep.equal([]);
+        });
+
+        it('requires an address', async function() {
+            const { x } = make();
+            await x.load({ 'docker-extension': {} }, []);
+            let err = null;
+            try { await x.install(); } catch (e) { err = e; }
+            expect(err.message).to.contain('needs an extension address');
+        });
+
+        it('uses PowerShell constructs on Windows', async function() {
+            const x = new DockerX('e', null, '');
+            x.platform = WINDOWS;
+            x.setBakeletName('docker-extension');
+            const calls = [];
+            x.exec = async (cmd) => { calls.push(cmd); };
+            x.execCapture = async () => '';
+            await x.load({ 'docker-extension': 'org/ext' }, []);
+            await x.install();
+            expect(calls[0]).to.contain('Select-String');
+        });
+
+        it('needs no elevation', function() {
+            expect(new DockerX('e', null, '').requiresElevation).to.be.false;
+        });
+    });
+});
+
+describe('config: keys is gone', function() {
+    const fsx  = require('fs-extra');
+    const root = path.join(__dirname, '..', '..');
+
+    it('the bakelet module no longer exists', function() {
+        expect(fsx.existsSync(path.join(root, 'lib', 'bakelets', 'config', 'keys.js'))).to.be.false;
+    });
+
+    it('its playbook no longer exists', function() {
+        expect(fsx.existsSync(
+            path.join(root, 'remotes', 'bakelets-source', 'config', 'keys.yml'))).to.be.false;
+    });
+
+    it('the committed private key is gone from the repo', function() {
+        // It was byte-identical to the key `config: keys` distributed, so anyone
+        // with the repo held it. Removed with the bakelet that shipped it.
+        expect(fsx.existsSync(path.join(root, 'config', 'baker_rsa'))).to.be.false;
+        expect(fsx.existsSync(path.join(root, 'config', 'baker_rsa.pub'))).to.be.false;
+    });
+
+    it('global-vars no longer exports a key path', function() {
+        const globals = require('../../global-vars');
+        expect(globals).to.not.have.property('privateKey');
+        expect(globals).to.not.have.property('bakerSSHConfig');
+        expect(globals).to.not.have.property('bakerForMacPath');
+    });
+
+    it('the remaining config bakelets are files and template', function() {
+        const dir = path.join(root, 'lib', 'bakelets', 'config');
+        expect(fsx.readdirSync(dir).sort()).to.deep.equal(['files.js', 'template.js']);
     });
 });

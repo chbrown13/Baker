@@ -69,13 +69,56 @@ tools:
 | `jupyter` | — | Jupyter notebook |
 | `latex` | — | LaTeX toolchain |
 | `jekyll` | — | Jekyll static site generator |
-| `maven` | — | No playbook; installs via an Ansible `apt` ad-hoc call |
+| `maven` | — | Maven build tool |
 | `ansible` | e.g. `ansible2` | Ansible itself, on the target |
+| `node` | — | Node.js and npm, sudo-free counterpart to `lang: nodejs` |
+| `opunit` | — | The verifier `baker check` shells out to |
+| `baker` | — | Baker itself — requires `source:`, see below |
+| `docker-extension` | — | A Docker Desktop extension — requires `address:`, see below |
 | `dazed` | e.g. `dazed2` | |
 | `defects4j` | e.g. `defects4j2` | Defects4J bug database |
 | `claude-code` | — | Agentic coding CLI — see below |
 | `opencode` | — | Agentic coding CLI — see below |
-| `jenkins-job-builder` | — | **Non-functional.** The file is empty; using it throws. |
+
+`jupyter`, `latex`, `maven`, `ansible`, `node`, and `opunit` are **exec-based**: one idempotent
+command per package manager, no Ansible and no playbook. `jekyll`, `dazed`, and `defects4j` are
+still playbook-backed and need a Linux target.
+
+### `node`, `opunit`, `baker`
+
+```yaml
+tools:
+  - node          # nodejs + npm from the target's package manager
+  - opunit        # npm install -g ottomatica/opunit
+  - baker:
+      source: your-org/Baker    # required — see below
+```
+
+`baker` has **no default source**, deliberately: the name `baker` on the public npm registry is an
+unrelated package, so guessing would install someone else's software. Give the npm package or git
+shorthand your Baker is published at. It cannot bootstrap Baker either — a machine running
+`baker bake` already has it — so its job is aligning a cohort on one version.
+
+`opunit` and `baker` install through npm without `sudo`. Where npm's global prefix is root-owned
+the install fails with `EACCES`; the fix is a user-owned prefix (nvm, fnm, volta), not `sudo npm`,
+which leaves root-owned files in `~/.npm`.
+
+### `docker-extension`
+
+```yaml
+tools:
+  - docker-extension:
+      address: dockersamples/labspace-extension
+  # or the shorthand:
+  - docker-extension: dockersamples/labspace-extension
+```
+
+Installs a Docker **Desktop** extension. Desktop must already be running — Baker does not try to
+install or start it, because Desktop cannot be installed non-interactively across the three
+platforms and launching a GUI application from a bake is not a bakelet's job. When Desktop is not
+reachable the bake stops with a message naming both fixes, and **no install is attempted**.
+
+Docker Engine alone does not provide extensions.
 
 ### Agentic coding tools
 
@@ -133,8 +176,6 @@ services:
 | `mongodb` | `mongodb3.6` | `services/mongodb/mongodb<v>.yml` |
 | `neo4j` | *(unversioned playbook)* | `services/neo4j/neo4j.yml` |
 | `docker` | — | Docker CE, inside the environment |
-| `lxd` | — | Playbook exists; no bakelet class, so not selectable from `services:` |
-| `jenkins` | — | **Non-functional.** The file is empty; using it throws. |
 
 **MySQL** takes config file paths, copied from your project into the environment:
 
@@ -189,29 +230,25 @@ already root, so this works unchanged inside a container.
 
 ```yaml
 config:
-  - keys: ["deploy", "app"]
   - template:
       src: ./nginx.conf
       dest: /etc/nginx/nginx.conf
-  - vault:
-      - file: secrets/database.yml
-        dest: /etc/myapp/database.yml
 ```
 
 | Entry | Purpose |
 |-------|---------|
 | `files` | Places files and directories at chosen paths, with overlays, pruning, and append |
-| `keys` | Copies the Baker private key into the environment as `<name>_id_rsa` for each listed name |
 | `template` | Renders a file through Mustache and writes it to the target, with `vars:` available |
-| `vault` | Decrypts Ansible Vault files and places them on the target |
 
-`vault` prompts for a passphrase on first use and caches it per-directory in configstore. Manage
-it with `baker vault --clear`.
+**`vault` was removed.** Both the `config: - vault:` section and the `baker vault` command are
+gone. A config still using the section fails with `Cannot find vault in config Bakelets.`
 
-> **Limitation:** `keys` and `vault` call the SSH helpers directly instead of going through
-> `this.copy()`. They work in control-VM and remote modes but **not** in local or docker mode. Use
-> `files` instead where you only need to place a file. See
-> [Troubleshooting](troubleshooting.md#bakelets-that-bypass-the-transport).
+**`keys` was removed.** It copied Baker's own SSH private key into the environment once per name
+in the list — every "client key" was the same key, and that key was committed to this repository,
+so anyone with the repo held it. It also wrote to `/keys` at the filesystem root under `become: yes`,
+and nothing installed the key any more once the control-VM path went. `files:` covers the honest
+use case: place a file you control at a path you choose, with a manifest, pruning, and a cleanup
+inverse.
 
 ### `files` — declarative file placement
 
@@ -363,7 +400,6 @@ How it runs depends on the mode:
 | local | `child_process.execSync` in the working directory | **no** — blocks until it exits |
 | docker | `docker exec <c> /bin/bash -c '<cmd>'` | **no** |
 | remote | Ansible `shell` with `nohup`, output to `~/start.out` / `~/start.err` | yes |
-| control-VM | the `start` helper over SSH | yes |
 
 In local and docker modes a long-running `start:` command will block the bake. Use `commands:` and
 `baker run` instead if you want to launch it separately.
@@ -374,11 +410,6 @@ In local and docker modes a long-running `start:` command will block the bake. U
 
 Three entries in the catalog do not have a working implementation:
 
-| Entry | State |
-|-------|-------|
-| `services: jenkins` | `lib/bakelets/services/jenkins.js` is a 0-byte file |
-| `tools: jenkins-job-builder` | `lib/bakelets/tools/jenkins-job-builder.js` is a 0-byte file |
-| `services: lxd` | playbook exists at `services/lxd/lxd.yml`, but no bakelet class references it |
-
-Requiring an empty module yields `{}`, so the resolver's `new classFoo(...)` throws a `TypeError`
-rather than a helpful message. Avoid these three.
+The 0-byte `services: jenkins` and `tools: jenkins-job-builder` stubs, and the orphaned `lxd`
+playbook that had no bakelet class, were all **deleted**. Nothing in the catalog is a placeholder
+now: every entry listed above resolves to a real class.

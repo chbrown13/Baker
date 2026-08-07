@@ -2,12 +2,12 @@
 
 This walks through building an environment end to end. It uses the **local provider**, which needs
 no VM and no container — bakelets run directly on your machine. Once the shape is familiar,
-switching to a container or VM is a one-key change.
+switching to a container or a remote host is a one-key change.
 
-> **Before you start:** the local provider needs Ansible and passwordless sudo. See
-> [Installation](installation.md#local-provider). If you'd rather not grant that on your own
-> machine, jump to [Using a container instead](#using-a-container-instead) and use the `docker:`
-> provider — the sudo requirement applies inside the container, where it's already satisfied.
+> **Before you start:** this walkthrough sticks to the *portable* sections, which need neither
+> Ansible nor sudo — just a package manager. Adding `lang:` or `services:` moves you into the
+> playbook-backed tier, which needs both and a Linux target. See
+> [Installation](installation.md#local).
 
 ## 1. Create a `baker.yml`
 
@@ -16,27 +16,26 @@ In an empty project directory:
 ```yaml
 name: hello-baker
 local: {}
-lang:
-  - python3
 packages:
   - curl
   - git
-commands:
-  serve: python3 -m http.server 8000
-  test: python3 -m pytest
+  - jq
+tools:
+  - maven
 ```
 
-`baker init` generates a starter file interactively if you'd rather not write one by hand.
+Write this by hand. (`baker init` exists, but it currently produces a config `baker bake` rejects —
+see [Troubleshooting](troubleshooting.md#baker-init-writes-a-config-baker-bake-rejects).)
 
 What each key does:
 
-- **`name:`** identifies the environment. Baker uses it for the box directory, the container name,
-  and the entry in the environment index.
+- **`name:`** identifies the environment. Baker uses it for the state directory, the container
+  name, and the entry in the environment index.
 - **`local: {}`** selects the local provider and uses the current directory as the working
   location. `local: ~/some/path` points it elsewhere.
-- **`lang:`**, **`packages:`** are *bakelets* — units of provisioning. See
+- **`packages:`**, **`tools:`** are *bakelets* — units of provisioning. `packages:` is a bare list
+  of names installed with whatever package manager the target has. See
   [Bakelets](bakelets.md) for the full catalog.
-- **`commands:`** registers named commands you can run later with `baker run <name>`.
 
 ## 2. Bake it
 
@@ -44,12 +43,14 @@ What each key does:
 baker bake
 ```
 
-Baker reads `./baker.yml`, selects the local provider from the `local:` key, and runs each bakelet
-in order. You'll see a spinner per bakelet — `Preparing python`, then `Installing python`.
+Baker reads `./baker.yml`, selects the local provider from the `local:` key, detects your package
+manager, and runs each bakelet in order. You'll see a spinner per bakelet — `Preparing maven`, then
+`Installing maven`.
 
-Under the hood each bakelet renders an Ansible playbook and executes it with
-`ansible-playbook -i "localhost," -c local`. Pass `--verbose` to see the generated variables and
-the full Ansible output:
+Before any of that, a pre-flight gate checks the target can support every section the config asks
+for. A refused bake changes nothing at all.
+
+Pass `--verbose` to see the full command output:
 
 ```bash
 baker bake --verbose
@@ -59,19 +60,25 @@ baker bake --verbose
 
 ```bash
 baker ssh              # open a shell in the environment
-baker run serve        # run the "serve" command from baker.yml
-baker run              # list available commands
-baker status           # show all Baker environments and their state
+baker check            # verify the result with opunit
 ```
 
-For the local provider, `baker ssh` opens your `$SHELL` in the environment's box directory. For
-containers and VMs it's a real SSH or `docker exec` session.
+For the local provider, `baker ssh` opens your `$SHELL`. For containers it is a `docker exec`
+session, and for remote a real SSH session.
 
-## 4. Tear it down
+`baker run <name>` runs a command from the `commands:` block, but **currently works only on
+`docker:`** — see the [CLI reference](baker-commands.md#baker-run).
+
+## 4. Undo it
 
 ```bash
-baker destroy          # or: baker delete
+baker cleanup          # remove what the bake placed — the inverse of bake
+baker cleanup --dry-run  # see the plan without changing anything
 ```
+
+`baker destroy` also exists, but it tears down the *environment* rather than undoing the bake: on
+`local:` it just forgets the environment and leaves everything installed. `cleanup` is the one that
+reverses a bake.
 
 ## Using a container instead
 
@@ -90,8 +97,8 @@ commands:
 ```
 
 `baker bake` now pulls the image, starts a container named `hello-baker`, and runs the same
-bakelets inside it via `ansible_connection=docker`. `baker ssh` becomes `docker exec -it`, and
-`baker destroy` removes the container.
+bakelets inside it. `baker ssh` becomes `docker exec -it`, and `baker destroy` removes the
+container.
 
 `docker: {}` uses `ubuntu:latest`. The object form takes an explicit image:
 
@@ -102,23 +109,23 @@ docker:
 
 If you omit `name:`, the container is named after the current directory.
 
-## Using a VM instead
+## Using a remote server instead
 
 ```yaml
 name: hello-baker
-vm:
-  ip: 192.168.22.22
-  ports: 8000
-  memory: 2048
+remote:
+  ip: 10.0.0.5
+  user: ubuntu
+  private_key: ~/.ssh/id_rsa
 lang:
   - python3
 ```
 
-This is a bigger step: VM provisioning routes through the `baker-srv` control VM, which Baker
-installs on first use. It requires VirtualBox and takes noticeably longer. Your project directory
-is shared into the VM at `/<directory-name>`, and `ports:` sets up forwarding from host to guest.
+Baker configures a machine you can already reach over SSH. This is the target where the
+playbook-backed sections (`lang:`, `services:`, `custom:`) are most comfortable, since sudo is
+normally available on a server you administer.
 
-See [Providers](providers.md) for the trade-offs between the backends.
+See [Providers](providers.md) for the trade-offs between the three targets.
 
 ## Pointing Baker at someone else's config
 

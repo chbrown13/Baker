@@ -5,32 +5,29 @@ See also: [CLI reference](baker-commands.md) · [Bakelets](bakelets.md) ·
 
 ## Top-Level Environment Keys
 
-Exactly one provider key selects the backend. They are tested in a **fixed priority order** — the
-first one present wins, so a file with both `docker:` and `vm:` gets the Docker provider.
+Exactly one provider key selects the target. They are tested in a **fixed priority order** — the
+first one present wins, so a file with both `docker:` and `local:` gets the Docker provider.
 
 | Priority | Key | Type | Provider Selected | Description |
 |----------|-----|------|-------------------|-------------|
-| — | `name` | string (required) | — | Environment name used for VM/container/box naming |
+| — | `name` | string (required) | — | Environment name used for container and directory naming |
 | 1 | `docker` | string or object | docker-local | Container on your local Docker daemon |
 | 2 | `local` | string or `{}` | Local | Run bakelets directly on the host machine |
-| 3 | `container` / `persistent` | object | Runc | OCI container hosted on `baker-srv` |
-| 4 | `vm` | object | VirtualBox | Direct VirtualBox provider |
-| 4 | `vagrant` | object | VirtualBox | Vagrant-shaped config (currently dispatches to VirtualBox) |
-| 5 | `remote` | object | Remote | Provision an existing server via SSH |
+| 3 | `remote` | object | Remote | Configure an existing server via SSH |
 
 `name:` is used everywhere the environment is identified. For the `docker:` provider it may be
 omitted, in which case the container is named after the current directory.
 
-### Vagrant / VM / Container sub-fields
+### Retired keys
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `ip` | string | Private network IP (e.g. `192.168.33.10`) |
-| `memory` | string/number | RAM in MB (e.g. `512` or `"512"`) |
-| `ports` | string | Port mappings (e.g. `"8000, 9000, 1000:3000"`) |
-| `network` | array | Network configs: `forwarded_port` (guest/host), `private_network` (ip) |
-| `synced_folders` | array | Folder sync configs: `folder` with `src`/`dest` |
-| `box` | string | Vagrant box name (e.g. `ubuntu/trusty64`) |
+`vm:`, `vagrant:`, `container:`, and `persistent:` selected the VirtualBox and runc providers,
+which were removed along with the `baker-srv` control VM. A config carrying any of them is
+**rejected before anything runs**, with a message naming the key and the three supported
+alternatives. They are checked before the live keys, so a file with both `local:` and `vm:` still
+gets the specific error rather than silently ignoring the dead half.
+
+There is no compatibility shim. Sub-fields that only ever applied to a VM — `memory`, `network`,
+`synced_folders`, `box` — have no equivalent.
 
 ### Remote sub-fields
 
@@ -39,7 +36,7 @@ omitted, in which case the container is named after the current directory.
 | `user` | string | yes | SSH username |
 | `private_key` | string | yes | Path to SSH private key |
 | `ip` | string | yes | Remote server IP/hostname |
-| `port` | number | yes | SSH port (usually 22) |
+| `port` | number | no | SSH port; defaults to 22 |
 
 ### Local
 
@@ -106,9 +103,12 @@ Array of bakelet names:
 | `jekyll` | `jekyll` | Jekyll static site generator |
 | `jupyter` | `jupyter` | Jupyter notebook |
 | `latex` | `latex` | LaTeX typesetting |
-| `maven` | `maven` | Maven build tool (no playbook; installed via an apt ad-hoc call) |
+| `maven` | `maven` | Maven build tool |
+| `node` | `node` | Node.js and npm — the sudo-free counterpart to `lang: nodejs` |
+| `opunit` | `opunit` | The verifier `baker check` shells out to |
+| `baker` | `baker` | Baker itself — takes a required `source:` |
+| `docker-extension` | — | A Docker Desktop extension — takes a required `address:` |
 | `opencode` | `opencode` | OpenCode agentic CLI — see below |
-| `jenkins-job-builder` | — | **Non-functional** — the bakelet file is empty and throws |
 
 ```yaml
 tools:
@@ -179,7 +179,6 @@ Array of bakelet names:
 | `mongodb{version}` | `mongodb3.6` | MongoDB |
 | `mysql{version}` | `mysql5.7`, `mysql8` | MySQL — supports config file paths |
 | `neo4j` | *(unversioned playbook)* | Neo4j graph database |
-| `jenkins` | — | **Non-functional** — the bakelet file is empty and throws |
 
 ```yaml
 services:
@@ -188,9 +187,6 @@ services:
   - mongodb3.6
   - neo4j
 ```
-
-A playbook for `lxd` exists at `services/lxd/lxd.yml`, but there is no bakelet class for it, so it
-cannot be selected from `services:`.
 
 **MySQL** supports sub-fields for custom config:
 ```yaml
@@ -215,9 +211,7 @@ Array of config objects:
 | Entry | Format | Description |
 |-------|--------|-------------|
 | `files` | `{files: [...], prune: bool, run: [...]}` | Place files and directories at chosen paths |
-| `keys` | `{keys: ["client1", "client2"]}` | Copy SSH private keys into the environment |
 | `template` | `{template: {src: "local/file", dest: "/remote/path"}}` | Render a file and write it to the target |
-| `vault` | `{vault: [{file: "secret.yml", dest: "/remote/path"}]}` | Decrypt Ansible Vault files and deploy |
 
 ```yaml
 config:
@@ -228,14 +222,22 @@ config:
         dest: .scripts/run.sh
         mode: "0755"
     prune: true               # remove what the last bake placed and this one does not
-  - keys: ["deploy", "app"]
   - template:
       src: ./nginx.conf
       dest: /etc/nginx/nginx.conf
-  - vault:
-      - file: secrets/database.yml
-        dest: /etc/myapp/database.yml
 ```
+
+`files:` and `template:` are both portable and run everywhere.
+
+**`keys:` was removed.** It distributed a single SSH private key — one that was committed to the
+Baker repository — under one filename per name in the list. Use `files:` to place a key you
+control.
+
+**`vault:` was removed.** The `baker vault` command and the `config: - vault:` section are both
+gone; a config still using the section fails with `Cannot find vault in config Bakelets.` For a
+per-person secret, have the participant place it themselves and assert it with
+[`baker check`](baker-commands.md#baker-check) rather than shipping an encrypted file everyone
+must be able to decrypt.
 
 Full `files:` reference, including `append:`, `ensure: dir`, `overwrite:`, and the manifest that
 makes pruning safe: [Bakelets](bakelets.md#files--declarative-file-placement).
@@ -313,17 +315,18 @@ A single string command run automatically at the end of a successful bake:
 start: jupyter notebook --no-browser
 ```
 
-How it runs — and whether it is backgrounded — depends on the provider:
+It is **backgrounded in all three modes**, so a long-running command does not block the bake:
 
-| Mode | Mechanism | Backgrounded |
-|------|-----------|--------------|
-| local | `child_process.execSync` in the working directory | **no** |
-| docker | `docker exec <c> /bin/bash -c '<cmd>'` | **no** |
-| remote | Ansible `shell` with `nohup`, output to `~/start.out` / `~/start.err` | yes |
-| control-VM | the `start` helper over SSH | yes |
+| Mode | Mechanism |
+|------|-----------|
+| local | detached `spawn`, then `unref` |
+| docker | `docker exec -d <c> /bin/bash -c '<cmd>'` |
+| remote | Ansible `shell` with `nohup`, output to `~/start.out` / `~/start.err` |
 
-In local and docker modes a long-running `start:` blocks the bake from finishing. Use `commands:`
-and `baker run` instead if you want to launch a server separately.
+The trade-off is that failures are invisible — output is discarded, so a `start:` command that
+exits non-zero surfaces nothing. Run it by hand in the environment if it is not behaving.
+
+A value containing a single quote breaks in docker mode, because of the `bash -c '…'` wrapper.
 
 ### `commands:` — Named Commands
 
@@ -364,26 +367,6 @@ Additionally, `BAKER_SHARE_DIR` is automatically injected pointing to the baker.
 
 ---
 
-## Legacy `bake:` Section
-
-Older pattern for running custom Ansible playbooks directly:
-
-```yaml
-bake:
-  ansible:
-    source: env/
-    run:
-      - ansible-playbook bootstrap.yml -i inventory
-      - ansible-playbook configure.yml -i inventory -s
-  vault:
-    source: src/env/vault.yml
-    checkout:
-      key: my-key
-      dest: ~/.ssh/id_rsa
-```
-
----
-
 ## Version Number Convention
 
 Many bakelets accept a version number appended directly to the name string. The parse logic splits on the boundary between alpha characters and trailing digits:
@@ -410,14 +393,13 @@ not exist. See [Bakelets](bakelets.md) for what is available per bakelet.
 ```yaml
 name: dev-environment
 
-# Provider selection (pick one)
+# Target selection (pick exactly one)
 local: /home/user/project
-# vagrant:
-#   box: ubuntu/trusty64
-#   memory: 2048
-#   network:
-#     - private_network:
-#         ip: 192.168.33.10
+# docker: node:18
+# remote:
+#   ip: 10.0.0.5
+#   user: ubuntu
+#   private_key: ~/.ssh/id_rsa
 
 # Optional custom variables
 vars:
@@ -447,13 +429,14 @@ config:
       dest: /etc/myapp/my.conf
 
 resources:
-  - git: "https://github.com/user/repo.git:/home/vagrant/project"
+  - git: "https://github.com/user/repo.git:~/project"
 
 env:
   - APP_ENV: development
   - LOG_LEVEL: debug
 
-# Named commands, run with `baker run <name>`
+# Named commands. `baker run` currently works on docker: only —
+# see the CLI reference.
 commands:
   serve: npm start
   test: npm test

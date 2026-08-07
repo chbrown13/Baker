@@ -1,4 +1,0 @@
-tools:
-  - jenkins-job-builder
-services:
-  - jenkins

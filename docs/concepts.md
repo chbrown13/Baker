@@ -21,14 +21,15 @@ automatically from the top-level keys in your `baker.yml` — there is no `provi
 ```yaml
 local: {}        # → LocalProvider          — your machine
 docker: node:18  # → DockerLocalProvider    — a container on your Docker daemon
-vm: {...}        # → VirtualBoxProvider     — a VirtualBox VM
-container: {...} # → RuncProvider           — an OCI container on baker-srv
 remote: {...}    # → RemoteProvider         — a server you already have
 ```
 
-Selection is first-match against a fixed priority order, so a file with both `docker:` and `vm:`
-gets the Docker provider. [Providers](providers.md#how-a-provider-is-selected) documents the exact
-order and the `--useVM` / `--useContainer` overrides.
+Selection is first-match against a fixed priority order, so a file with both `docker:` and `local:`
+gets the Docker provider. There is no provider flag — the config decides.
+
+The retired keys `vm:`, `vagrant:`, `container:`, and `persistent:` are checked first and rejected
+with a message naming the three above. See
+[Providers](providers.md#how-a-provider-is-selected).
 
 ## Bakelets
 
@@ -89,38 +90,40 @@ Because the version selects a playbook filename, only versions with a matching p
 This is the piece that ties providers to bakelets, and the part worth understanding if anything
 surprises you.
 
-Bakelets are written once, against `this.copy()` and `this.exec()`. The resolver
-(`lib/bakelets/resolve.js`) rebinds those two methods per bakelet instance depending on how the
-target is reached. There are four modes:
+Bakelets are written once, against `this.copy()`, `this.exec()`, and `this.execCapture()`. The
+resolver (`lib/bakelets/resolve.js`) builds **one transport per bake** and every bakelet in that
+bake shares it. There are three modes:
 
 | Mode | Used by | `exec()` becomes | Ansible runs |
 |------|---------|------------------|--------------|
-| **control-VM** | `vm:`, `container:`, `vagrant:` | SSH into `baker-srv` | on `baker-srv`, over SSH to the target |
-| **local** | `local:` | `child_process.execSync` on the host | on the host, `-c local` |
+| **local** | `local:` | `child_process.execSync` on the host (PowerShell on Windows) | on the host, `-c local` |
 | **remote** | `remote:` | SSH to the remote host | on the host, over SSH to the remote |
 | **docker** | `docker:` | `docker exec <container>` | on the host, `ansible_connection=docker` |
 
-The control-VM mode is the original design: all provisioning is routed through a small Alpine VM
-called `baker-srv` that carries the Ansible installation. The other three modes were added to
-remove that requirement — they run Ansible straight from your host, which is why they need Ansible
-installed locally and the control-VM modes don't.
+All three run straight from your machine. Baker previously routed provisioning through a control VM
+called `baker-srv`; that mode, and the providers that needed it, were removed.
 
-For local, remote, and docker modes the resolver also temporarily swaps out the static methods on
-the `Ansible` module so that playbook, apt, pip, npm, template, and directory operations target the
-right transport. See [Architecture](architecture.md#mode-patching) for the mechanics.
+In local mode the transport also rewrites the `/home/vagrant/baker/<name>/` prefix bakelets use to
+address the target, pointing it at the real location — a holdover from the control-VM layout that
+bakelets still write against.
 
-## The `baker-srv` control VM
+For the playbook-backed sections the resolver temporarily swaps the static methods on the `Ansible`
+module so playbook, template, and directory operations target the right transport. See
+[Architecture](architecture.md#mode-patching).
 
-`baker-srv` is a 1 GB Alpine VM that exists only to run Ansible. Baker installs it automatically
-the first time you bake a `vm:`, `container:`, or `vagrant:` environment, and you can manage it
-explicitly with `baker setup` and `baker server`.
+## The two tiers
 
-It's reachable on `localhost:6022` as `root`, using `~/.baker/baker_rsa`. Your filesystem root is
-bind-mounted into it at `/share` so playbooks can read project files.
+Bakelets divide by **what they need**, not by which transport runs them, so no bakelet has two
+implementations and nothing can drift:
 
-The `local:`, `docker:`, and `remote:` providers deliberately bypass it. `bake.js` guards the
-`Servers.installBakerServer()` call with `instanceof` checks so those three never trigger a VM
-install.
+| Tier | Sections | Needs Ansible? | Runs on |
+|---|---|---|---|
+| **Portable** | `files:`, `tools:`, `env:`, `config:`, `packages:`, `resources:`, `start:` | no | Linux, macOS, Windows |
+| **Linux-target** | `lang:`, `services:`, `custom:`, `tools: jekyll`/`dazed`/`defects4j` | yes | Linux targets only |
+
+A playbook-backed bakelet declares `requiresAnsible`, and the pre-flight gate refuses the bake on a
+non-Linux target **before anything runs**. The portable tier installs through per-manager command
+tables, so a new distribution costs one table entry rather than a branch in every bakelet.
 
 ## Variables
 

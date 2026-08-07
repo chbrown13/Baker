@@ -4,10 +4,11 @@
 
 These are real gaps in Baker, not misconfiguration. Listed so you can recognize them quickly.
 
-### Sudo in host-direct modes
+### Sudo and the playbook-backed tier
 
-Every built-in bakelet playbook declares `become: yes`. In `local:`, `remote:`, and `docker:` modes
-Ansible runs against a target with no cached sudo credentials, so provisioning fails:
+The playbook-backed bakelets — `lang:`, `services:`, `custom:`, and
+`tools: jekyll`/`dazed`/`defects4j` — declare `become: yes`. Against a target with no cached sudo
+credentials they fail:
 
 ```
 sudo: a password is required
@@ -20,54 +21,45 @@ sudo visudo
 # your-username ALL=(ALL) NOPASSWD: ALL
 ```
 
-For `docker:` this is already satisfied — the container runs as root.
+For `docker:` this is already satisfied — the container runs as root, and Baker computes the `sudo`
+prefix from the target's user id rather than hardcoding it.
 
-This is the outstanding architectural decision for the project. The options under consideration
-are: keep Ansible and fix `-c local` become handling (still needs sudo); replace Ansible with
-direct `execSync` calls (still needs sudo); or introduce user-local bakelets that install into
-`$HOME` and need no root at all. Only the third actually removes the requirement.
+**The portable tier needs none of this.** `files:`, `tools:`, `env:`, `config: template`,
+`packages:`, `resources:`, and `start:` run as plain commands. If a config sticks to those, sudo
+never enters the picture beyond whatever an individual package manager asks for.
 
-### Bakelets that bypass the transport
+### `baker init` writes a config `baker bake` rejects
 
-`config: keys` and `config: template` call `Ssh.copyFromHostToVM` directly instead of going
-through `this.copy()`. Because the resolver rebinds `copy()`/`exec()` per mode but cannot
-intercept a direct SSH call, these two bakelets:
+`baker init` renders a template that still emits a `vm:` key, retired with the VirtualBox provider:
 
-- **work** in control-VM mode and in `remote:` mode (which sets `ansibleSSHConfig` to the remote's
-  config),
-- **fail** in `local:` and `docker:` mode.
-
-Avoid `keys` and `template` in host-direct environments. See
-[Extending Baker](extending.md#rules-to-follow) for why custom bakelets should not repeat this.
-
-### `--remote` flag is broken
-
-`lib/commands/bake.js:159` calls `BakerObj.bakeRemote(...)`, which has no definition in
-`lib/modules/baker.js`. Any invocation of:
-
-```bash
-baker bake --remote <ip> --remote_key <key> --remote_user <user>
+```
+$ baker init
+$ baker bake
+==> Error: 'vm:' is no longer supported.
 ```
 
-throws a `TypeError`.
+**Workaround:** write `baker.yml` by hand from the [reference](baker-yml-reference.md).
 
-**Use the `remote:` key in `baker.yml` instead** — that path is implemented and tested:
+### `baker run` works only on `docker:`
 
-```yaml
-remote:
-  ip: 10.0.0.5
-  user: ubuntu
-  private_key: ~/.ssh/id_rsa
+It wraps the script as `cd /<project-basename>; <script>` — the path where your project was mounted
+inside the old control VM. On `local:` that directory does not exist:
+
+```
+==> Error: spawnSync /bin/sh ENOENT
+```
+
+On `remote:` it fails more quietly: the provider's `ssh()` takes no arguments, so your command is
+discarded and an interactive shell opens instead.
   port: 22
 ```
 
 ### Empty bakelet files
 
-`services: jenkins` and `tools: jenkins-job-builder` are 0-byte files. Requiring one yields `{}`,
-so the resolver's `new classFoo(...)` throws an unhelpful `TypeError: classFoo is not a
-constructor` rather than reporting an unimplemented bakelet.
-
-`services/lxd/lxd.yml` exists as a playbook but has no bakelet class, so it can't be selected.
+The 0-byte `services: jenkins` and `tools: jenkins-job-builder` stubs were deleted, along with the
+orphaned `lxd` playbook. If you hit `TypeError: classFoo is not a constructor` from the resolver, a
+bakelet module exists but exports nothing — `test/bake/test-command-tables.js` guards against a new
+one appearing.
 
 ### Clearing the source cache
 
@@ -98,21 +90,29 @@ Categories always run `lang → config → services → tools → packages → r
 start`. If a tool must be installed before a service, that ordering can't be expressed. Workaround:
 use a `custom:` bakelet, or fold the dependency into a single bakelet.
 
-### `start:` blocks in local and docker modes
+### `start:` failures are invisible
 
-In `local:` and `docker:` modes, `start:` runs through a synchronous `execSync` and is **not**
-backgrounded, so a long-running command blocks the bake from finishing. Remote and control-VM modes
-background it properly.
+`start:` is backgrounded in all three modes — local spawns detached, docker uses `docker exec -d`,
+remote uses `nohup`. The trade-off is that a `start:` command which exits non-zero fails silently:
+its output is discarded, so nothing surfaces in the terminal or in `bake.log`.
 
-Use `commands:` plus `baker run` if you want to launch a server separately.
+If a `start:` command is not doing what you expect, run it by hand in the environment first.
+
+A `start:` value containing a single quote also breaks in docker mode, because the command is
+wrapped as `bash -c '<cmd>'`.
+
+### `ports:` is ignored on `docker:`
+
+The key parses and is then discarded — no port bindings are configured for the container.
 
 ### Other pre-existing issues
 
 - The `padLevels` warning at startup comes from a transitive dependency.
-- `node-virtualbox` has been unmaintained since 2016.
-- macOS and Windows are not currently tested.
+- macOS and Windows are covered by a CI matrix that has **not yet run**, so package names for the
+  non-apt managers — `latex` especially, and every `choco` entry — are unconfirmed.
 - `owner/repo:sub/dir/file.yml` sub-directory paths are explicitly rejected by the source resolver.
-- DigitalOcean has a provider class but no `baker.yml` key, so it can't be selected by a bake.
+- The Windows elevation check's *detection* half is unverified on a real non-admin shell. The
+  "nothing was written" half is proven by a filesystem-hash test.
 
 ---
 
@@ -144,10 +144,14 @@ Verify Ansible is installed on the **host** for `local:`, `docker:`, and `remote
 ansible --version
 ```
 
-### `This command only supports VM, container, docker, and local environments`
+### `no supported environment found in baker.yml.`
 
-No recognized provider key in `baker.yml`. Add one of `docker:`, `local:`, `container:`, `vm:`,
-`vagrant:`, or `remote:`. See [Providers](providers.md#how-a-provider-is-selected).
+No recognized provider key in `baker.yml`. Add exactly one of `docker:`, `local:`, or `remote:`.
+An empty file, or one that is a list rather than a mapping, produces the same error.
+
+If the message instead names a key — `'vm:' is no longer supported` — the config was written
+against a provider that has been removed. See
+[Providers](providers.md#retired-keys); there is no compatibility shim.
 
 ### `invalid baker.yml for remote provider`
 
@@ -155,8 +159,9 @@ The `remote:` block is missing `ip`, `user`, or `private_key`. All three are req
 
 ### `Can't find baker.yml in current directory`
 
-`baker bake` with no argument requires `./baker.yml`. Pass a source explicitly, or run
-`baker init`.
+`baker bake` with no argument requires `./baker.yml`. Pass a source explicitly, or write the file
+by hand — see the [reference](baker-yml-reference.md). (`baker init` exists but currently produces
+a config `bake` rejects.)
 
 ### `opunit not found on PATH`
 
@@ -206,21 +211,11 @@ env:
   MY_VAR: hello        # throws — the bakelet calls forEach on this
 ```
 
-### baker-srv problems
+### `Cannot find vault in config Bakelets.`
 
-```bash
-baker server ssh          # shell into the control VM
-baker server reload       # stop and start it
-baker setup --force       # destroy and reinstall it
-baker server repair <env> # fix a wedged environment (e.g. locked dpkg)
-```
-
-If the VM won't come up at all, check that VirtualBox is installed and that hardware
-virtualization is enabled:
-
-```bash
-baker status
-```
+The `config: - vault:` section and the `baker vault` command were both removed. For a per-person
+secret, have the person place it themselves and assert it with `baker check` rather than shipping
+an encrypted file that everyone must be able to decrypt.
 
 ---
 
@@ -229,12 +224,18 @@ baker status
 Almost every command takes `--verbose` / `-v`, which prints the flattened Ansible variables and the
 raw playbook output. It's the first thing to reach for.
 
+Every failure is also appended to `~/.baker/bake.log` with the command that failed, the package
+manager in use, and the likely fix. `env:` values are redacted from both the terminal and the log.
+
 To see what Baker thinks exists:
 
 ```bash
-baker status                    # virtualization support + all environments
 cat ~/.baker/data/index.json    # the raw environment index
+ls ~/.baker/cache/              # resolved baker.yml sources
 ```
 
 To inspect what a bakelet staged, look under `/home/vagrant/baker/<name>/` on the target (or the
 working directory in local mode) — the generated playbooks are left in place.
+
+`baker cleanup --dry-run` prints exactly what a bake placed, without changing anything. It is a
+useful way to see what Baker believes it owns.
