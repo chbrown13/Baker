@@ -134,7 +134,7 @@ See [Providers](providers.md) for the trade-offs between the three targets.
 ```bash
 baker bake ~/projects/thing            # a directory containing baker.yml
 baker bake ottomatica/baker-test       # clone a GitHub repo, use its baker.yml
-baker bake your-org/configs:units/one  # clone a repo, use the baker.yml in units/one
+baker bake your-org/configs@PM3        # clone a repo at a branch or tag
 baker bake https://gist.github.com/... # a gist, snippet, or raw file URL
 ```
 

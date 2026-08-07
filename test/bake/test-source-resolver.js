@@ -104,33 +104,33 @@ describe('source resolver', function() {
             expect(err.message).to.match(/No baker\.yml found/);
         });
 
-        it('uses a baker.yml file arg directly (no copy)', async function() {
+        // `bake` takes a directory, never a file — a file argument used to be
+        // accepted and silently renamed into the cache as baker.yml.
+        it('rejects a path to baker.yml itself, naming its directory', async function() {
             const dir = path.join(tmpRoot, 'proj');
             fs.mkdirSync(dir);
             fs.writeFileSync(path.join(dir, 'baker.yml'), 'name: x\n');
-            expect(await resolveSource(path.join(dir, 'baker.yml'))).to.equal(dir);
+            let err;
+            try { await resolveSource(path.join(dir, 'baker.yml')); } catch (e) { err = e; }
+            expect(err, 'a file argument should be rejected').to.not.be.undefined;
+            expect(err.message).to.contain('takes the directory containing it');
+            expect(err.message).to.contain(dir);
         });
 
-        it('stages a differently-named .yml file into the cache as baker.yml, not cwd', async function() {
-            const origHome = process.env.HOME;
-            const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-home-'));
-            process.env.HOME = tmpHome;
-            try {
-                const file = path.join(tmpRoot, 'python2.yml');
-                fs.writeFileSync(file, 'name: python2\n');
-                process.chdir(tmpRoot);
+        it('rejects a differently-named .yml rather than renaming it', async function() {
+            const file = path.join(tmpRoot, 'python2.yml');
+            fs.writeFileSync(file, 'name: python2\n');
+            let err;
+            try { await resolveSource(file); } catch (e) { err = e; }
+            expect(err.message).to.contain('reads a directory whose top level holds a baker.yml');
+        });
 
-                const before = fs.readdirSync(tmpRoot);
-                const resolved = await resolveSource(file);
-                const after = fs.readdirSync(tmpRoot);
-
-                expect(after).to.deep.equal(before);        // nothing staged into cwd
-                expect(resolved.startsWith(path.join(tmpHome, '.baker', 'cache'))).to.equal(true);
-                expect(fs.readFileSync(path.join(resolved, 'baker.yml'), 'utf8')).to.equal('name: python2\n');
-            } finally {
-                if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
-                fs.rmSync(tmpHome, { recursive: true, force: true });
-            }
+        it('tells the author how to fix a differently-named config', async function() {
+            const file = path.join(tmpRoot, 'PM3.yml');
+            fs.writeFileSync(file, 'name: pm3\n');
+            let err;
+            try { await resolveSource(file); } catch (e) { err = e; }
+            expect(err.message).to.contain('mv PM3.yml baker.yml');
         });
 
         it('throws for an existing non-.yml file', async function() {
@@ -138,7 +138,7 @@ describe('source resolver', function() {
             fs.writeFileSync(file, 'hello');
             let err;
             try { await resolveSource(file); } catch (e) { err = e; }
-            expect(err.message).to.match(/not a \.yml/);
+            expect(err.message).to.match(/reads a directory whose top level holds a baker\.yml/);
         });
 
         it('clones owner/repo shorthand when it is not a local path', async function() {
@@ -185,20 +185,92 @@ describe('source resolver', function() {
             expect(err.message).to.contain('addresses a file');
         });
 
-        // AC-2 — subdirectory addressing, which used to be rejected outright.
-        it('resolves owner/repo:subdir to that subdirectory (AC-2)', async function() {
+        // Sub-directory addressing was removed 2026-08-07: a repository holds one
+        // baker.yml, at its top level, and variants are selected by ref.
+        it('rejects owner/repo:subdir instead of resolving it', async function() {
+            process.chdir(tmpRoot);
+            let err;
+            try { await resolveSource('your-org/configs:assignments/unit-1'); } catch (e) { err = e; }
+            expect(err, 'a sub-directory address should be rejected').to.not.be.undefined;
+            expect(err.message).to.contain('no longer supports');
+        });
+
+        it('says a baker.yml must be at the top level', async function() {
+            process.chdir(tmpRoot);
+            let err;
+            try { await resolveSource('your-org/configs:units/two'); } catch (e) { err = e; }
+            expect(err.message).to.contain('top level');
+        });
+
+        it('suggests a ref in place of the sub-directory', async function() {
+            process.chdir(tmpRoot);
+            let err;
+            try { await resolveSource('your-org/configs:assignments/PM3'); } catch (e) { err = e; }
+            expect(err.message).to.contain('your-org/configs@PM3');
+        });
+
+        it('rejects before any network access', async function() {
             const orig = Git.clone;
-            const cloneDir = path.join(tmpRoot, 'clone');
-            const unitDir = path.join(cloneDir, 'assignments', 'unit-1');
-            fs.mkdirSync(unitDir, { recursive: true });
-            fs.writeFileSync(path.join(unitDir, 'baker.yml'), 'name: unit-1\n');
-            let cloned;
-            Git.clone = async (url) => { cloned = url; return cloneDir; };
+            let cloned = false;
+            Git.clone = async () => { cloned = true; return tmpRoot; };
             try {
                 process.chdir(tmpRoot);
-                const resolved = await resolveSource('your-org/configs:assignments/unit-1');
-                expect(cloned).to.equal('https://github.com/your-org/configs.git');
-                expect(resolved).to.equal(unitDir);
+                try { await resolveSource('your-org/configs:units/one'); } catch (e) { /* expected */ }
+                expect(cloned, 'a rejected address must not clone').to.be.false;
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('resolves owner/repo@ref to the repo root, cloned at that ref', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone-ref');
+            fs.mkdirSync(cloneDir, { recursive: true });
+            fs.writeFileSync(path.join(cloneDir, 'baker.yml'), 'name: pm3\n');
+            let seen;
+            Git.clone = async (url, ref) => { seen = { url, ref }; return cloneDir; };
+            try {
+                process.chdir(tmpRoot);
+                const resolved = await resolveSource('your-org/configs@PM3');
+                expect(seen.url).to.equal('https://github.com/your-org/configs.git');
+                expect(seen.ref).to.equal('PM3');
+                expect(resolved).to.equal(cloneDir);
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('passes no ref for a bare owner/repo', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone-noref');
+            fs.mkdirSync(cloneDir, { recursive: true });
+            fs.writeFileSync(path.join(cloneDir, 'baker.yml'), 'name: x\n');
+            let seen;
+            Git.clone = async (url, ref) => { seen = { url, ref }; return cloneDir; };
+            try {
+                process.chdir(tmpRoot);
+                await resolveSource('your-org/configs');
+                expect(seen.ref).to.be.undefined;
+            } finally {
+                Git.clone = orig;
+            }
+        });
+
+        it('supports a ref containing a slash', function() {
+            expect(classifyRemote('your-org/configs@release/1.2').ref).to.equal('release/1.2');
+        });
+
+        it('reports a missing top-level baker.yml naming the ref', async function() {
+            const orig = Git.clone;
+            const cloneDir = path.join(tmpRoot, 'clone-empty');
+            fs.mkdirSync(cloneDir, { recursive: true });
+            Git.clone = async () => cloneDir;
+            try {
+                process.chdir(tmpRoot);
+                let err;
+                try { await resolveSource('your-org/configs@PM9'); } catch (e) { err = e; }
+                expect(err.message).to.contain('top level');
+                expect(err.message).to.contain('PM9');
             } finally {
                 Git.clone = orig;
             }
@@ -213,55 +285,6 @@ describe('source resolver', function() {
             try {
                 process.chdir(tmpRoot);
                 expect(await resolveSource('your-org/configs')).to.equal(cloneDir);
-            } finally {
-                Git.clone = orig;
-            }
-        });
-
-        // AC-3
-        it('errors actionably when the subdirectory has no baker.yml (AC-3)', async function() {
-            const orig = Git.clone;
-            const cloneDir = path.join(tmpRoot, 'clone2');
-            const unitDir = path.join(cloneDir, 'units', 'two');
-            fs.mkdirSync(unitDir, { recursive: true });
-            Git.clone = async () => cloneDir;
-            try {
-                process.chdir(tmpRoot);
-                let err;
-                try { await resolveSource('your-org/configs:units/two'); } catch (e) { err = e; }
-                expect(err.message).to.contain('units/two');
-                expect(err.message).to.contain('https://github.com/your-org/configs.git');
-                expect(err.message).to.contain(unitDir);
-            } finally {
-                Git.clone = orig;
-            }
-        });
-
-        it('errors naming the subdirectory when it does not exist at all (AC-3)', async function() {
-            const orig = Git.clone;
-            const cloneDir = path.join(tmpRoot, 'clone3');
-            fs.mkdirSync(cloneDir);
-            Git.clone = async () => cloneDir;
-            try {
-                process.chdir(tmpRoot);
-                let err;
-                try { await resolveSource('your-org/configs:units/absent'); } catch (e) { err = e; }
-                expect(err.message).to.match(/Sub-directory "units\/absent" does not exist/);
-            } finally {
-                Git.clone = orig;
-            }
-        });
-
-        it('refuses a subdirectory that escapes the clone', async function() {
-            const orig = Git.clone;
-            const cloneDir = path.join(tmpRoot, 'clone4');
-            fs.mkdirSync(cloneDir);
-            Git.clone = async () => cloneDir;
-            try {
-                process.chdir(tmpRoot);
-                let err;
-                try { await resolveSource('your-org/configs:../../etc'); } catch (e) { err = e; }
-                expect(err.message).to.match(/resolves outside/);
             } finally {
                 Git.clone = orig;
             }
@@ -339,5 +362,59 @@ describe('source resolver', function() {
                 expect(fs.readdirSync(tmpRoot)).to.deep.equal([]);
             });
         });
+    });
+});
+
+describe('bake and cleanup share one address grammar', function() {
+    // cleanup.js and bake.js both call resolveSource, so the grammars cannot
+    // drift — but that is an invariant worth asserting rather than assuming,
+    // since a future edit could give either its own resolution path.
+    const fsx = require('fs-extra');
+    const root = path.join(__dirname, '..', '..');
+    const src  = (rel) => fsx.readFileSync(path.join(root, rel), 'utf8');
+
+    it('cleanup resolves its source with resolveSource', function() {
+        expect(src('lib/commands/cleanup.js')).to.contain('resolveSource');
+    });
+
+    it('bake resolves its positional with resolveSource', function() {
+        expect(src('lib/commands/bake.js')).to.contain('resolveSource');
+    });
+
+    it('neither command resolves an address any other way', function() {
+        // Git.clone / Git.fetchBakerFile appear in bake.js only behind the
+        // explicit --repo / --file flags, and not at all in cleanup.js.
+        expect(src('lib/commands/cleanup.js')).to.not.contain('Git.clone');
+        expect(src('lib/commands/cleanup.js')).to.not.contain('fetchBakerFile');
+    });
+
+    it('cleanup documents the same grammar as bake', function() {
+        expect(src('lib/commands/cleanup.js')).to.contain('identical grammar to bake');
+    });
+
+    it('accepts and rejects identically across a matrix of addresses', async function() {
+        // One resolver, so this is really a regression net: if resolveSource
+        // ever grew a per-verb branch, these would diverge.
+        const base = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-parity-'));
+        const dir = path.join(base, 'parity');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'baker.yml'), 'name: p\n');
+
+        const addresses = [
+            dir,                                  // a directory with baker.yml
+            path.join(dir, 'baker.yml'),          // a file — rejected
+            path.join(base, 'absent'),            // missing path — rejected
+            'org/repo:units/one',                 // sub-directory — rejected
+            'org/repo:env.yml'                    // opunit grammar — rejected
+        ];
+
+        const outcome = async (a) => {
+            try { await resolveSource(a); return 'accept'; } catch (e) { return 'reject'; }
+        };
+
+        const results = [];
+        for (const a of addresses) results.push(await outcome(a));
+        fs.rmSync(base, { recursive: true, force: true });
+        expect(results).to.deep.equal(['accept', 'reject', 'reject', 'reject', 'reject']);
     });
 });

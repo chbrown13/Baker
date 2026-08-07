@@ -995,3 +995,58 @@ describe('config: files bakelet', function() {
         });
     });
 });
+
+describe('files: src cannot escape the repository', function() {
+    // Sub-directory addressing was removed 2026-08-07, so bakePath is always the
+    // repository root. Nothing legitimately climbs out with ../../base/ any more,
+    // and reaching above the root would place content from outside the repo the
+    // address named.
+    const Files = require('../../lib/bakelets/config/files');
+
+    function make(bakePath) {
+        const f = new Files('env', null, '');
+        f.setBakePath(bakePath);
+        return f;
+    }
+
+    it('resolves a plain relative src inside the repo', function() {
+        const f = make('/repo');
+        expect(f.resolveSrc('./content/')).to.equal(path.resolve('/repo/content'));
+    });
+
+    it('resolves a nested relative src', function() {
+        const f = make('/repo');
+        expect(f.resolveSrc('content/agents/reviewer.md'))
+            .to.equal(path.resolve('/repo/content/agents/reviewer.md'));
+    });
+
+    it('allows the repository root itself', function() {
+        const f = make('/repo');
+        expect(f.resolveSrc('.')).to.equal(path.resolve('/repo'));
+    });
+
+    it('rejects a src that climbs one level out', function() {
+        const f = make('/repo');
+        expect(() => f.resolveSrc('../outside')).to.throw(/resolves outside the repository/);
+    });
+
+    it('rejects the old overlay form ../../base/', function() {
+        const f = make('/repo');
+        expect(() => f.resolveSrc('../../base/')).to.throw(/resolves outside the repository/);
+    });
+
+    it('rejects an absolute src outside the repo', function() {
+        const f = make('/repo');
+        expect(() => f.resolveSrc('/etc/passwd')).to.throw(/resolves outside the repository/);
+    });
+
+    it('points the author at refs rather than paths', function() {
+        const f = make('/repo');
+        expect(() => f.resolveSrc('../../base/')).to.throw(/branch or tag/);
+    });
+
+    it('is not fooled by a sibling directory with a shared prefix', function() {
+        const f = make('/repo');
+        expect(() => f.resolveSrc('../repo-other/x')).to.throw(/resolves outside the repository/);
+    });
+});

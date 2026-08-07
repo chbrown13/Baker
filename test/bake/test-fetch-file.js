@@ -136,9 +136,35 @@ describe('Git.fetchBakerFile (cache staging)', function () {
     });
 
     it('uses a distinct directory per URL', async function () {
-        const a = await Git.fetchBakerFile('https://example.com/a.yml');
-        const b = await Git.fetchBakerFile('https://example.com/b.yml');
+        const a = await Git.fetchBakerFile('https://example.com/one/baker.yml');
+        const b = await Git.fetchBakerFile('https://example.com/two/baker.yml');
         expect(a).to.not.equal(b);
+    });
+
+    it('refuses a raw URL that does not name a baker.yml', async function () {
+        let err;
+        try { await Git.fetchBakerFile('https://example.com/PM3.yml'); } catch (e) { err = e; }
+        expect(err, 'a non-baker.yml raw URL should be refused').to.not.be.undefined;
+        expect(err.message).to.match(/does not name a baker\.yml/);
+        expect(err.message).to.contain('PM3.yml');
+    });
+
+    it('accepts baker.yaml as well as baker.yml', async function () {
+        expect(await Git.fetchBakerFile('https://example.com/baker.yaml')).to.be.a('string');
+    });
+
+    it('refuses a multi-file gist with no baker.yml, naming what it found', async function () {
+        const orig = Git.fetchJson;
+        Git.fetchJson = async () => ({ files: { 'PM3.yml': { content: 'name: pm3\n' },
+                                                'notes.md': { content: 'hi' } } });
+        try {
+            let err;
+            try { await Git.fetchBakerFile('https://gist.github.com/u/1234abcd'); } catch (e) { err = e; }
+            expect(err.message).to.match(/No baker\.yml in gist/);
+            expect(err.message).to.contain('PM3.yml');
+        } finally {
+            Git.fetchJson = orig;
+        }
     });
 
     it('surfaces an empty gist as an actionable error', async function () {

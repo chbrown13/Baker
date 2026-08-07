@@ -31,17 +31,24 @@ baker bake [source] [--local <path>] [--repo <url>] [--file <url>] [--verbose]
 
 | Argument | Description |
 |----------|-------------|
-| `source` | Where the `baker.yml` comes from: a directory, `owner/repo`, `owner/repo:subdir`, or a URL. Always resolves to a directory containing a literal `baker.yml`. Omit to use `./baker.yml`. |
+| `source` | Where the `baker.yml` comes from: a directory, `owner/repo`, `owner/repo@ref`, or a URL. Always resolves to a directory whose **top level** holds a literal `baker.yml`. Omit to use `./baker.yml`. |
 
 ```bash
 baker bake                                # ./baker.yml
 baker bake ~/project                      # a directory containing baker.yml
 baker bake ottomatica/baker-test          # clone a GitHub repo, use its baker.yml
-baker bake your-org/configs:units/one     # clone, then use the baker.yml in units/one
+baker bake your-org/configs@PM3           # clone at a branch or tag
 baker bake https://gist.github.com/…      # a gist, snippet, or raw file URL
 ```
 
-An address ending in `.yml` is rejected — that form belongs to [`baker check`](#baker-check).
+Three forms are rejected, each naming the fix:
+
+- `owner/repo:env.yml` — that grammar belongs to [`baker check`](#baker-check)
+- `owner/repo:subdir` — a repository holds one `baker.yml`, at its top level; use `@ref`
+- **any path to a file**, including `./project/baker.yml` — `bake` reads a *directory*
+
+The file `bake` reads is always literally `baker.yml`. A differently-named local config is rejected
+with the `mv` that fixes it, rather than being renamed behind your back.
 
 An existing local path always wins over the `owner/repo` shorthand. Clones and fetches go to
 `~/.baker/cache/`, never your working directory, and re-baking updates an existing clone rather
@@ -87,8 +94,43 @@ baker check [target]
 | `baker check` | `opunit verify local` | the local machine, using `test/opunit.yml` |
 | `baker check <user>/<repo>:<file.yml>` | `opunit profile <address>` | the local machine, using a checks file fetched from GitHub |
 
+The file may sit at any path in the repository — `org/profiles:env.yml` and
+`org/profiles:units/PM3.yml` both work. Note this is the **opposite** of `bake`, which takes a
+repository and requires `baker.yml` at the top level.
+
 Opunit's output streams through directly and its exit code is propagated, so
 `baker bake && baker check` works in CI.
+
+### Profiles live on `master`, and refs are refused
+
+opunit resolves a profile as `raw.githubusercontent.com/<owner>/<repo>/master/<file>` — **the
+branch is hardcoded** (opunit 0.9.4, `lib/profile.js`). Baker cannot change that, so it refuses a
+ref rather than passing one through to build an unresolvable URL:
+
+```
+$ baker check org/profiles@PM3:env.yml
+==> org/profiles@PM3:env.yml names a ref, which opunit profiles do not support.
+    opunit reads a profile from the master branch of the repository.
+    Try: baker check org/profiles:env.yml
+```
+
+So where assignments can vary by branch on the template repo — `baker bake org/template@PM3` —
+profiles cannot. Keep one profile file per unit on `master`.
+
+### A target that cannot be run is an error
+
+Only the **absence** of a target selects local mode. A target that is not a profile address is
+refused, and opunit is not spawned:
+
+```
+$ baker check org/agent-template
+==> org/agent-template is not an opunit profile address.
+    `check` takes <owner>/<repo>:<file>.yml — a file on the repository's master branch, at any path.
+    Omit the argument to run ./test/opunit.yml against this machine.
+```
+
+Previously an unrecognised target fell through to `opunit verify local`, which ran a *different*
+check and reported its result as though it were the requested one.
 
 **Baker installs, opunit asserts.** Some things cannot be installed non-interactively — Docker
 Desktop, a personal git identity, an API key belonging to one person. Baker does not fake them;
@@ -106,7 +148,7 @@ repositories, and tools a bake placed on a machine you keep using.
 baker cleanup [source] [--dry-run] [--yes] [--all] [--verbose]
 ```
 
-`source` takes the same grammar as `bake`. Omit it to use `./baker.yml`.
+`source` takes **exactly** the same grammar as `bake` — both call the same resolver, so an address that bakes will clean up. Omit it to use `./baker.yml`.
 
 | Flag | Alias | Description |
 |------|-------|-------------|

@@ -110,7 +110,6 @@ The key parses and is then discarded — no port bindings are configured for the
 - The `padLevels` warning at startup comes from a transitive dependency.
 - macOS and Windows are covered by a CI matrix that has **not yet run**, so package names for the
   non-apt managers — `latex` especially, and every `choco` entry — are unconfirmed.
-- `owner/repo:sub/dir/file.yml` sub-directory paths are explicitly rejected by the source resolver.
 - The Windows elevation check's *detection* half is unverified on a real non-admin shell. The
   "nothing was written" half is proven by a filesystem-hash test.
 
@@ -177,13 +176,18 @@ npm install -g ottomatica/opunit
 at the directory holding the `baker.yml` instead:
 
 ```bash
-baker bake  owner/repo:units/one     # not owner/repo:one.yml
+baker bake  owner/repo@PM3          # not owner/repo:one.yml
 baker check owner/profiles:one.yml   # the .yml form belongs here
 ```
 
-### `No baker.yml in "<subdir>" of <repo>`
+### `<address> addresses a sub-directory, which bake no longer supports`
 
-The subdirectory resolved, but has no `baker.yml` in it. The error names the exact path Baker
+A repository holds one `baker.yml`, at its top level. Select a variant with a branch or tag —
+`owner/repo@PM3` — rather than a path. The error suggests the equivalent ref.
+
+### `No baker.yml at the top level of <repo>`
+
+The repo cloned, but has no `baker.yml` at its root. The error names the exact path Baker
 looked in. Each config directory needs its own literal `baker.yml`.
 
 ### Docker: permission denied on `/var/run/docker.sock`

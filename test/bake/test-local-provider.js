@@ -564,3 +564,38 @@ describe('retired providers through the CLI', function() {
         });
     });
 });
+
+describe('LocalProvider.resolveLocation', function() {
+    // path.resolve does not expand a tilde, so `local: ~/project` used to create
+    // a literal "~" directory under the cwd. files: dest already expanded it.
+    it('expands a leading ~/ to the home directory', function() {
+        expect(LocalProvider.resolveLocation('~/project'))
+            .to.equal(path.join(os.homedir(), 'project'));
+    });
+
+    it('expands a bare ~', function() {
+        expect(LocalProvider.resolveLocation('~')).to.equal(os.homedir());
+    });
+
+    it('expands a nested home-relative path', function() {
+        expect(LocalProvider.resolveLocation('~/a/b/c'))
+            .to.equal(path.join(os.homedir(), 'a', 'b', 'c'));
+    });
+
+    it('never yields a path segment that is literally ~', function() {
+        expect(LocalProvider.resolveLocation('~/project').split(path.sep)).to.not.include('~');
+    });
+
+    it('leaves an absolute path alone', function() {
+        expect(LocalProvider.resolveLocation('/tmp/x')).to.equal(path.resolve('/tmp/x'));
+    });
+
+    it('still resolves a relative path against the cwd', function() {
+        expect(LocalProvider.resolveLocation('./sub')).to.equal(path.resolve('./sub'));
+    });
+
+    it('does not expand a tilde that is not leading', function() {
+        // A directory legitimately named "a~b" must survive.
+        expect(LocalProvider.resolveLocation('./a~b')).to.equal(path.resolve('./a~b'));
+    });
+});

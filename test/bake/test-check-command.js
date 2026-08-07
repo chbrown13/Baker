@@ -61,14 +61,17 @@ describe('check command', function() {
         expect(spawnCalls[0].args).to.deep.equal(['profile', 'your-org/profiles:env.yml']);
     });
 
-    it('should treat a bare name as local verify, not a profile', async function() {
+    // These used to assert a silent fall-through to local mode. That reported a
+    // DIFFERENT check's result as the requested one, so an unrunnable target is
+    // now an error and opunit is never spawned.
+    it('should refuse a bare name rather than running local checks', async function() {
         await check.handler({ target: 'my-vm' });
-        expect(spawnCalls[0].args).to.deep.equal(['verify', 'local']);
+        expect(spawnCalls, 'opunit must not be spawned for a refused target').to.have.lengthOf(0);
     });
 
-    it('should treat an ssh-style address as local verify, not a profile', async function() {
+    it('should refuse an ssh-style address rather than running local checks', async function() {
         await check.handler({ target: 'user@192.168.1.10' });
-        expect(spawnCalls[0].args).to.deep.equal(['verify', 'local']);
+        expect(spawnCalls).to.have.lengthOf(0);
     });
 
     it('should inherit stdio so opunit output streams through', async function() {
@@ -89,9 +92,77 @@ describe('check command', function() {
             expect(spawnCalls[0].args).to.deep.equal(['profile', 'your-org/profiles:env.yaml']);
         });
 
-        it('treats a directory address as local verify — that form belongs to bake', async function() {
+        it('refuses a directory address — that form belongs to bake', async function() {
             await check.handler({ target: 'your-org/configs:units/one' });
-            expect(spawnCalls[0].args).to.deep.equal(['verify', 'local']);
+            expect(spawnCalls, 'a bake-shaped address must not run local checks').to.have.lengthOf(0);
+        });
+    });
+});
+
+describe('check refuses a target it cannot run as a profile', function() {
+    // An unrecognised target used to fall through to `opunit verify local`,
+    // running a DIFFERENT check and reporting its result as the requested one.
+    const { opunitArgs } = require('../../lib/commands/check');
+
+    it('runs local checks only when no target is given', function() {
+        expect(opunitArgs(undefined)).to.deep.equal(['verify', 'local']);
+    });
+
+    it('runs a profile for a root-level .yml address', function() {
+        expect(opunitArgs('org/profiles:env.yml')).to.deep.equal(['profile', 'org/profiles:env.yml']);
+    });
+
+    it('runs a profile for a nested .yml address', function() {
+        expect(opunitArgs('org/profiles:units/PM3.yml'))
+            .to.deep.equal(['profile', 'org/profiles:units/PM3.yml']);
+    });
+
+    it('accepts a .yaml extension', function() {
+        expect(opunitArgs('org/profiles:env.yaml')[0]).to.equal('profile');
+    });
+
+    it('refuses a repository with no file', function() {
+        expect(() => opunitArgs('org/profiles')).to.throw(/not an opunit profile address/);
+    });
+
+    it('refuses a sub-directory address', function() {
+        expect(() => opunitArgs('org/profiles:units/one')).to.throw(/not an opunit profile address/);
+    });
+
+    it('refuses an unparseable target instead of silently running local checks', function() {
+        expect(() => opunitArgs('org/profiles:PM3.yml@PM3')).to.throw(/not an opunit profile address/);
+    });
+
+    it('refuses a local path', function() {
+        expect(() => opunitArgs('./some/path')).to.throw(/not an opunit profile address/);
+    });
+
+    it('never substitutes local mode for a target that was given', function() {
+        // The regression this guards: any of these returning ['verify','local']
+        // would report a passing local check as though the profile had passed.
+        ['org/profiles', 'org/profiles:units/one', 'garbage', './x'].forEach((t) => {
+            let args = null;
+            try { args = opunitArgs(t); } catch (e) { /* expected */ }
+            expect(args, `${t} must not fall through to local mode`).to.be.null;
+        });
+    });
+
+    describe('refs', function() {
+        // opunit 0.9.4 builds raw.githubusercontent.com/<repo>/master/<file> —
+        // the branch is hardcoded, so a ref cannot be honoured.
+        it('refuses a ref on a profile address', function() {
+            expect(() => opunitArgs('org/profiles@PM3:env.yml'))
+                .to.throw(/opunit profiles do not support/);
+        });
+
+        it('explains that opunit reads from master', function() {
+            expect(() => opunitArgs('org/profiles@PM3:env.yml')).to.throw(/master branch/);
+        });
+
+        it('suggests the address without the ref', function() {
+            let msg = '';
+            try { opunitArgs('org/profiles@PM3:env.yml'); } catch (e) { msg = e.message; }
+            expect(msg).to.contain('baker check org/profiles:env.yml');
         });
     });
 });
