@@ -383,85 +383,7 @@ describe('DockerLocalProvider', function() {
         });
     });
 
-    describe('stop()', function() {
-        it('should stop the container when it exists in index', async function() {
-            let stopCalled = false;
-            let container = makeMockContainer({
-                stop: async () => { stopCalled = true; }
-            });
-            mockDocker.getContainer = (id) => container;
-
-            const origFind = Utils.FindInIndex;
-            Utils.FindInIndex = async (name) => ({
-                name: 'test-box',
-                type: 'docker-local',
-                info: { id: 'mock-id' }
-            });
-
-            const origRemove = Utils.removeFromIndex;
-            Utils.removeFromIndex = async () => {};
-
-            try {
-                await provider.stop('test-box');
-                expect(stopCalled).to.be.true;
-            } finally {
-                Utils.FindInIndex = origFind;
-                Utils.removeFromIndex = origRemove;
-            }
-        });
-
-        it('should do nothing when container is not in index', async function() {
-            const origFind = Utils.FindInIndex;
-            Utils.FindInIndex = async () => null;
-
-            try {
-                await provider.stop('nonexistent');
-            } finally {
-                Utils.FindInIndex = origFind;
-            }
-        });
-
-        it('should do nothing when index entry type is not docker-local', async function() {
-            const origFind = Utils.FindInIndex;
-            Utils.FindInIndex = async () => ({
-                name: 'test-box',
-                type: 'local',
-                info: {}
-            });
-
-            try {
-                await provider.stop('test-box');
-            } finally {
-                Utils.FindInIndex = origFind;
-            }
-        });
-
-        it('should gracefully handle stop errors', async function() {
-            let container = makeMockContainer({
-                stop: async () => { throw new Error('Already stopped'); }
-            });
-            mockDocker.getContainer = (id) => container;
-
-            const origFind = Utils.FindInIndex;
-            Utils.FindInIndex = async (name) => ({
-                name: 'test-box',
-                type: 'docker-local',
-                info: { id: 'mock-id' }
-            });
-
-            const origRemove = Utils.removeFromIndex;
-            Utils.removeFromIndex = async () => {};
-
-            try {
-                await provider.stop('test-box');
-            } finally {
-                Utils.FindInIndex = origFind;
-                Utils.removeFromIndex = origRemove;
-            }
-        });
-    });
-
-    describe('delete()', function() {
+        describe('delete()', function() {
         it('should stop and remove the container', async function() {
             let stopCalled = false;
             let removeCalled = false;
@@ -503,127 +425,7 @@ describe('DockerLocalProvider', function() {
         });
     });
 
-    describe('list()', function() {
-        it('should list docker-local containers from index', async function() {
-            const origGetEnvIndex = Utils.getEnvIndex;
-            Utils.getEnvIndex = async () => [{
-                name: 'test-container',
-                type: 'docker-local',
-                info: { id: 'abc', image: 'node:18' }
-            }];
-
-            let tableCalled = false;
-            const origTable = console.table;
-            console.table = function() { tableCalled = true; };
-
-            try {
-                await provider.list();
-                expect(tableCalled).to.be.true;
-            } finally {
-                Utils.getEnvIndex = origGetEnvIndex;
-                console.table = origTable;
-            }
-        });
-
-        it('should handle empty index gracefully', async function() {
-            const origGetEnvIndex = Utils.getEnvIndex;
-            Utils.getEnvIndex = async () => [];
-
-            let tableCalled = false;
-            const origTable = console.table;
-            console.table = function() { tableCalled = true; };
-
-            try {
-                await provider.list();
-                expect(tableCalled).to.be.true;
-            } finally {
-                Utils.getEnvIndex = origGetEnvIndex;
-                console.table = origTable;
-            }
-        });
-
-        it('should handle list errors gracefully when Docker is unreachable', async function() {
-            const origGetEnvIndex = Utils.getEnvIndex;
-            Utils.getEnvIndex = async () => {
-                throw new Error('connect ENOENT /var/run/docker.sock');
-            };
-
-            let errorOutput = '';
-            const origError = console.error;
-            console.error = (msg) => { errorOutput = msg; };
-
-            try {
-                await provider.list();
-                expect(errorOutput).to.include('Unable to list Docker containers');
-            } finally {
-                Utils.getEnvIndex = origGetEnvIndex;
-                console.error = origError;
-            }
-        });
-
-        it('should show removed state when container no longer exists', async function() {
-            const origGetEnvIndex = Utils.getEnvIndex;
-            Utils.getEnvIndex = async () => [{
-                name: 'gone-container',
-                type: 'docker-local',
-                info: { id: 'defunct-id', image: 'ubuntu:latest' }
-            }];
-
-            mockDocker.getContainer = () => {
-                return {
-                    inspect: async () => { throw new Error('No such container'); }
-                };
-            };
-
-            let capturedTable = null;
-            const origTable = console.table;
-            console.table = function(label, data) { capturedTable = data; };
-
-            try {
-                await provider.list();
-                expect(capturedTable).to.not.be.null;
-                expect(capturedTable[0].state).to.equal('removed');
-            } finally {
-                Utils.getEnvIndex = origGetEnvIndex;
-                console.table = origTable;
-            }
-        });
-    });
-
-    describe('getState()', function() {
-        it('should return running when container is running', async function() {
-            mockDocker.listContainers = async () => [{
-                Id: 'abc',
-                Names: ['/test-box'],
-                State: 'running',
-                Image: 'ubuntu:latest'
-            }];
-
-            const state = await provider.getState('test-box');
-            expect(state).to.equal('running');
-        });
-
-        it('should return stopped when container is stopped', async function() {
-            mockDocker.listContainers = async () => [{
-                Id: 'abc',
-                Names: ['/test-box'],
-                State: 'exited',
-                Image: 'ubuntu:latest'
-            }];
-
-            const state = await provider.getState('test-box');
-            expect(state).to.equal('stopped');
-        });
-
-        it('should return stopped when container does not exist', async function() {
-            mockDocker.listContainers = async () => [];
-
-            const state = await provider.getState('nonexistent');
-            expect(state).to.equal('stopped');
-        });
-    });
-
-    describe('pullImage()', function() {
+            describe('pullImage()', function() {
         it('should resolve when pull succeeds', async function() {
             mockDocker.pull = (image, cb) => {
                 cb(null, { on: () => {} });
@@ -748,12 +550,25 @@ describe('Baker.chooseProvider with docker key', function() {
         expect(result.provider.constructor.name).to.equal('DockerLocalProvider');
     });
 
-    it('should still return VirtualBoxProvider when doc.vm is present', async function() {
+    it('should reject a retired vm: config rather than choosing docker-local', async function() {
         const Baker = require('../../lib/modules/baker');
         const yml = 'name: test-vm\nvm:\n  ip: 192.168.1.1\n';
         await fs.writeFile(path.join(testDir, 'baker.yml'), yml);
+        let err = null;
+        try {
+            await Baker.chooseProvider(testDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err, 'vm: should have been rejected').to.not.be.null;
+        expect(err.message).to.contain("'vm:' is no longer supported");
+    });
+
+    it('should choose docker-local when docker: and a retired key would both be absent', async function() {
+        const Baker = require('../../lib/modules/baker');
+        await fs.writeFile(path.join(testDir, 'baker.yml'), 'name: d\ndocker:\n  image: ubuntu\n');
         const result = await Baker.chooseProvider(testDir);
-        expect(result.provider.constructor.name).to.equal('VirtualBoxProvider');
+        expect(result.provider.constructor.name).to.equal('DockerLocalProvider');
     });
 
     it('should still return LocalProvider when doc.local is present', async function() {
@@ -1098,29 +913,5 @@ describe('destroy.js DockerLocalProvider exclusion', function() {
 
         const shouldInstall = !(provider instanceof LocalProvider) && !(provider instanceof RemoteProvider) && !(provider instanceof DockerLocalProvider);
         expect(shouldInstall).to.be.false;
-    });
-});
-
-describe('Backward compatibility: other providers unaffected by docker-local', function() {
-    it('should still install baker server for VirtualBox provider', function() {
-        const VirtualBoxProvider = require('../../lib/modules/providers/virtualbox');
-        const LocalProvider = require('../../lib/modules/providers/local');
-        const RemoteProvider = require('../../lib/modules/providers/remote');
-        const DockerLocalProvider = require('../../lib/modules/providers/docker-local');
-        const vboxProvider = new VirtualBoxProvider();
-
-        const shouldInstall = !(vboxProvider instanceof LocalProvider) && !(vboxProvider instanceof RemoteProvider) && !(vboxProvider instanceof DockerLocalProvider);
-        expect(shouldInstall).to.be.true;
-    });
-
-    it('should still install baker server for RuncProvider', function() {
-        const RuncProvider = require('../../lib/modules/providers/runc');
-        const LocalProvider = require('../../lib/modules/providers/local');
-        const RemoteProvider = require('../../lib/modules/providers/remote');
-        const DockerLocalProvider = require('../../lib/modules/providers/docker-local');
-        const runcProvider = new RuncProvider();
-
-        const shouldInstall = !(runcProvider instanceof LocalProvider) && !(runcProvider instanceof RemoteProvider) && !(runcProvider instanceof DockerLocalProvider);
-        expect(shouldInstall).to.be.true;
     });
 });

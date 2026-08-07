@@ -173,41 +173,7 @@ describe('LocalProvider', function() {
         });
     });
 
-    describe('list()', function() {
-        it('should not throw when boxes directory is empty', async function() {
-            await provider.list();
-        });
-
-        it('should handle missing boxes directory gracefully', async function() {
-            const origReaddir = fs.readdir;
-            fs.readdir = () => Promise.reject(new Error('ENOENT'));
-            let called = false;
-            const origTable = console.table;
-            console.table = function() { called = true; };
-            try {
-                await provider.list();
-            } finally {
-                fs.readdir = origReaddir;
-                console.table = origTable;
-            }
-            expect(called).to.be.true;
-        });
-
-        it('should list boxes after starting one', async function() {
-            await provider.start(testBoxName);
-            try {
-                var called = false;
-                var origTable = console.table;
-                console.table = function() { called = true; };
-                await provider.list();
-                console.table = origTable;
-                expect(called).to.be.true;
-            } finally {
-                console.table = origTable || console.table;
-            }
-        });
     });
-});
 
 describe('Baker.chooseProvider', function() {
     const testBakeDir = path.join(tmpDir, 'choose-provider-test');
@@ -234,18 +200,113 @@ describe('Baker.chooseProvider', function() {
         expect(result.provider.constructor.name).to.equal('LocalProvider');
     });
 
-    it('should return VirtualBoxProvider when doc.vm is present', async function() {
-        const yml = 'name: test-vm\nvm:\n  ip: 192.168.1.1\n';
-        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), yml);
-        const result = await Baker.chooseProvider(testBakeDir);
-        expect(result.provider.constructor.name).to.equal('VirtualBoxProvider');
+    // The scope reduction removed the providers behind these keys. A config
+    // still carrying one must be told what to use instead, not crash on a null
+    // provider — so each retired key gets a named test.
+    const retiredKeys = {
+        vm:         'name: test-vm\nvm:\n  ip: 192.168.1.1\n',
+        vagrant:    'name: test-vagrant\nvagrant:\n  box: ubuntu\n',
+        container:  'name: test-container\ncontainer:\n  ip: 192.168.1.1\n',
+        persistent: 'name: test-persistent\npersistent:\n  ip: 192.168.1.1\n'
+    };
+
+    Object.keys(retiredKeys).forEach((key) => {
+        it(`should reject a retired ${key}: config naming the key`, async function() {
+            await fs.writeFile(path.join(testBakeDir, 'baker.yml'), retiredKeys[key]);
+            let err = null;
+            try {
+                await Baker.chooseProvider(testBakeDir);
+            } catch (e) {
+                err = e;
+            }
+            expect(err, `${key}: should have been rejected`).to.not.be.null;
+            expect(err.message).to.contain(`'${key}:' is no longer supported`);
+        });
+
+        it(`should name the three supported modes when rejecting ${key}:`, async function() {
+            await fs.writeFile(path.join(testBakeDir, 'baker.yml'), retiredKeys[key]);
+            let err = null;
+            try {
+                await Baker.chooseProvider(testBakeDir);
+            } catch (e) {
+                err = e;
+            }
+            expect(err.message).to.contain('local:');
+            expect(err.message).to.contain('docker:');
+            expect(err.message).to.contain('remote:');
+        });
     });
 
-    it('should return RuncProvider when doc.container is present', async function() {
-        const yml = 'name: test-container\ncontainer:\n  ip: 192.168.1.1\n';
-        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), yml);
+    it('should reject a config with no recognised environment key', async function() {
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), 'name: nothing\ntools:\n  - maven\n');
+        let err = null;
+        try {
+            await Baker.chooseProvider(testBakeDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err, 'a config with no environment key should be rejected').to.not.be.null;
+        expect(err.message).to.contain('no supported environment found');
+        expect(err.message).to.contain('local:');
+    });
+
+    it('should prefer the retired-key message over the generic one', async function() {
+        // vm: is retired AND unrecognised; the specific message is more useful.
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), retiredKeys.vm);
+        let err = null;
+        try {
+            await Baker.chooseProvider(testBakeDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err.message).to.not.contain('no supported environment found');
+    });
+
+    it('should reject a retired key even when a supported key is also present', async function() {
+        // An old config being migrated may carry both; the retired key is the
+        // one that will not work, so it is the one worth naming.
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'),
+            'name: mixed\nlocal: {}\nvm:\n  ip: 192.168.1.1\n');
+        let err = null;
+        try {
+            await Baker.chooseProvider(testBakeDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err, 'a config carrying vm: should be rejected even with local:').to.not.be.null;
+        expect(err.message).to.contain("'vm:' is no longer supported");
+    });
+
+    it('should reject an empty baker.yml with a real message', async function() {
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), '');
+        let err = null;
+        try {
+            await Baker.chooseProvider(testBakeDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err).to.not.be.null;
+        expect(err.message).to.contain('empty');
+        expect(err.message).to.not.contain('Cannot read properties');
+    });
+
+    it('should reject a baker.yml that is not a mapping', async function() {
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), '- just\n- a\n- list\n');
+        let err = null;
+        try {
+            await Baker.chooseProvider(testBakeDir);
+        } catch (e) {
+            err = e;
+        }
+        expect(err).to.not.be.null;
+        expect(err.message).to.contain('YAML mapping');
+    });
+
+    it('should still choose a supported provider when both a retired and a live key are absent of conflict', async function() {
+        // local: alone must be unaffected by the retired-key check.
+        await fs.writeFile(path.join(testBakeDir, 'baker.yml'), 'name: t\nlocal: {}\n');
         const result = await Baker.chooseProvider(testBakeDir);
-        expect(result.provider.constructor.name).to.equal('RuncProvider');
+        expect(result.provider.constructor.name).to.equal('LocalProvider');
     });
 });
 
@@ -289,6 +350,15 @@ describe('Ansible.runLocalPlaybook error handling', function() {
     });
 });
 
+async function waitForFile(file, timeout = 3000) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+        if (await fs.pathExists(file)) return true;
+        await new Promise(r => setTimeout(r, 25));
+    }
+    return false;
+}
+
 describe('resolve.js local mode start command', function() {
     const testBakeDir = path.join(tmpDir, 'resolve-start-test');
 
@@ -318,8 +388,8 @@ describe('resolve.js local mode start command', function() {
             testBakeDir
         );
 
-        const flagExists = await fs.pathExists(flagFile);
-        expect(flagExists).to.be.true;
+        const flagExists = await waitForFile(flagFile);
+        expect(flagExists, 'backgrounded start: command should still run').to.be.true;
         await fs.remove(flagFile).catch(() => {});
     });
 
@@ -341,8 +411,8 @@ describe('resolve.js local mode start command', function() {
             testBakeDir
         );
 
-        const flagExists = await fs.pathExists(flagFile);
-        expect(flagExists).to.be.true;
+        const flagExists = await waitForFile(flagFile);
+        expect(flagExists, 'backgrounded start: command should still run').to.be.true;
         await fs.remove(flagFile).catch(() => {});
     });
 });
@@ -435,5 +505,62 @@ describe('resolve.js local mode', function() {
 
         const install = issued.find((c) => c.includes('curl') && !c.includes('os-release'));
         expect(install).to.equal('sudo dnf install -y curl');
+    });
+});
+
+describe('retired providers through the CLI', function() {
+    // chooseProvider throwing is only useful if the message survives bake.js's
+    // catch and reaches the terminal. This exercises that boundary for real.
+    this.timeout(20000);
+
+    const cliDir = path.join(tmpDir, 'cli-retired');
+    const bakerBin = path.join(__dirname, '..', '..', 'baker.js');
+
+    function runBake(dir) {
+        return child_process.execSync(
+            `node "${bakerBin}" bake "${dir}" 2>&1 || true`,
+            { encoding: 'utf8', maxBuffer: 2000 * 1024 }
+        );
+    }
+
+    beforeEach(async function() {
+        await fs.ensureDir(cliDir);
+    });
+
+    afterEach(async function() {
+        await fs.remove(cliDir).catch(() => {});
+    });
+
+    it('prints the retired-key message for a vm: config', async function() {
+        await fs.writeFile(path.join(cliDir, 'baker.yml'), 'name: legacy\nvm:\n  ip: 192.168.1.1\n');
+        expect(runBake(cliDir)).to.contain("'vm:' is no longer supported");
+    });
+
+    it('names all three supported modes in the terminal output', async function() {
+        await fs.writeFile(path.join(cliDir, 'baker.yml'), 'name: legacy\ncontainer:\n  ip: 192.168.1.1\n');
+        const out = runBake(cliDir);
+        expect(out).to.contain('local:');
+        expect(out).to.contain('docker:');
+        expect(out).to.contain('remote:');
+    });
+
+    it('does not leave a stack trace in front of the explanation', async function() {
+        await fs.writeFile(path.join(cliDir, 'baker.yml'), 'name: legacy\nvagrant:\n  box: ubuntu\n');
+        expect(runBake(cliDir)).to.not.contain('at Function.chooseProvider');
+    });
+
+    it('still lists only the retained commands in --help', function() {
+        const help = child_process.execSync(`node "${bakerBin}" --help 2>&1 || true`, { encoding: 'utf8' });
+        ['setup', 'setupmac', 'server', 'boxes', 'import', 'package', 'halt', 'cluster',
+         'status', 'vault', 'command'].forEach((gone) => {
+            expect(help, `${gone} should no longer be a command`).to.not.contain(` ${gone} `);
+        });
+    });
+
+    it('still offers bake, check, cleanup, destroy, ssh, run', function() {
+        const help = child_process.execSync(`node "${bakerBin}" --help 2>&1 || true`, { encoding: 'utf8' });
+        ['bake', 'check', 'cleanup', 'destroy', 'ssh', 'run'].forEach((kept) => {
+            expect(help, `${kept} should still be a command`).to.contain(kept);
+        });
     });
 });

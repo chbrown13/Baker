@@ -766,61 +766,54 @@ describe('resolve.js remote mode', function() {
     });
 });
 
-describe('bake.js RemoteProvider exclusion', function() {
-    const LocalProvider = require('../../lib/modules/providers/local');
+describe('control-VM coupling is gone from the retained commands', function() {
+    const fs = require('fs-extra');
+    const path = require('path');
+    const root = path.join(__dirname, '..', '..');
 
-    it('should have RemoteProvider imported in bake command', function() {
-        const bakeCmd = require('../../lib/commands/bake');
-        expect(bakeCmd).to.not.be.undefined;
+    const source = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+
+    it('bake.js no longer requires the baker-srv servers module', function() {
+        expect(source('lib/commands/bake.js')).to.not.contain('modules/servers');
     });
 
-    it('should have Server.installBakerServer guarded against RemoteProvider', function() {
-        const provider = new RemoteProvider('u', '/tmp/k', '10.0.0.1');
-
-        // This condition mirrors bake.js line 151
-        const shouldInstall = !(provider instanceof LocalProvider) && !(provider instanceof RemoteProvider);
-        expect(shouldInstall).to.be.false;
+    it('destroy.js no longer requires the baker-srv servers module', function() {
+        expect(source('lib/commands/destroy.js')).to.not.contain('modules/servers');
     });
 
-    it('should have exposePorts guarded against RemoteProvider', function() {
-        const provider = new RemoteProvider('u', '/tmp/k', '10.0.0.1');
-
-        // This condition mirrors bake.js line 157
-        const shouldExpose = !(provider instanceof LocalProvider) && !(provider instanceof RemoteProvider);
-        expect(shouldExpose).to.be.false;
-    });
-});
-
-describe('destroy.js RemoteProvider exclusion', function() {
-    it('should have Server.installBakerServer guarded against RemoteProvider in destroy', function() {
-        const RemoteProvider = require('../../lib/modules/providers/remote');
-        const LocalProvider = require('../../lib/modules/providers/local');
-        const provider = new RemoteProvider('u', '/tmp/k', '10.0.0.1');
-
-        // This condition mirrors destroy.js line 53
-        const shouldInstall = !(provider instanceof LocalProvider) && !(provider instanceof RemoteProvider);
-        expect(shouldInstall).to.be.false;
-    });
-});
-
-describe('Backward compatibility: other providers unaffected', function() {
-    it('should still install baker server for VirtualBox provider', function() {
-        const VirtualBoxProvider = require('../../lib/modules/providers/virtualbox');
-        const LocalProvider = require('../../lib/modules/providers/local');
-        const RemoteProvider = require('../../lib/modules/providers/remote');
-        const vboxProvider = new VirtualBoxProvider();
-
-        const shouldInstall = !(vboxProvider instanceof LocalProvider) && !(vboxProvider instanceof RemoteProvider);
-        expect(shouldInstall).to.be.true;
+    it('neither command installs a baker server', function() {
+        expect(source('lib/commands/bake.js')).to.not.contain('installBakerServer');
+        expect(source('lib/commands/destroy.js')).to.not.contain('installBakerServer');
     });
 
-    it('should still install baker server for RuncProvider', function() {
-        const RuncProvider = require('../../lib/modules/providers/runc');
-        const LocalProvider = require('../../lib/modules/providers/local');
-        const RemoteProvider = require('../../lib/modules/providers/remote');
-        const runcProvider = new RuncProvider();
+    it('bake.js no longer forwards ports through the control VM', function() {
+        expect(source('lib/commands/bake.js')).to.not.contain('exposePorts');
+    });
 
-        const shouldInstall = !(runcProvider instanceof LocalProvider) && !(runcProvider instanceof RemoteProvider);
-        expect(shouldInstall).to.be.true;
+    it('bake.js no longer calls the never-implemented bakeRemote', function() {
+        expect(source('lib/commands/bake.js')).to.not.contain('bakeRemote');
+    });
+
+    it('the --forceVirtualBox flag is gone from both commands', function() {
+        expect(source('lib/commands/bake.js')).to.not.contain('forceVirtualBox');
+        expect(source('lib/commands/destroy.js')).to.not.contain('forceVirtualBox');
+    });
+
+    it('the removed provider modules are no longer resolvable', function() {
+        ['virtualbox', 'vagrant', 'runc', 'digitalocean', 'docker'].forEach((name) => {
+            expect(
+                fs.existsSync(path.join(root, 'lib', 'modules', 'providers', `${name}.js`)),
+                `providers/${name}.js should have been deleted`
+            ).to.be.false;
+        });
+    });
+
+    it('keeps the three providers the scope reduction retained', function() {
+        ['local', 'remote', 'docker-local'].forEach((name) => {
+            expect(
+                fs.existsSync(path.join(root, 'lib', 'modules', 'providers', `${name}.js`)),
+                `providers/${name}.js should still exist`
+            ).to.be.true;
+        });
     });
 });

@@ -23,36 +23,25 @@ Baker uses a configuration file (baker.yml) in the root directory of you project
 ``` yaml
 ---
 name: baker-test
-vm:
-  ip: 192.168.22.22
-  ports: 8000
-lang:
-  - nodejs9
+local: {}
+tools:
+  - maven
+packages:
+  - jq
 commands:
-  serve: cd /baker-test/deployment/express && npm install && node index.js
+  serve: npm install && node index.js
 ```
 
-You can also point to a git repository with a baker.yml file, and and Baker will do the rest:
+`local:` configures the machine you are sitting at. Use `local: {}` for the current directory,
+or give a path to place the environment somewhere else.
+
+You can also point to a git repository with a baker.yml file, and Baker will do the rest:
 
 ```
-$ baker bake --repo https://github.com/ottomatica/baker-test.git
+$ baker bake your-org/configs
 ```
 
-Baker also supports creating environments inside containers that do not require a VM.
-
-``` yaml
-name: baker-docs
-container: 
-  ports: 8000
-lang:
-  - python2
-commands:
-  build: mkdocs build
-  serve: mkdocs serve -a 0.0.0.0:8000
-  gh-deploy: mkdocs gh-deploy
-```
-
-If you already have Docker installed, the `docker:` key provisions a container on your **local Docker daemon** — no VM required. Baker connects to `/var/run/docker.sock` (or `DOCKER_HOST`), so the same bakelets you use for VMs run inside a plain container.
+If you already have Docker installed, the `docker:` key provisions a container on your **local Docker daemon**. Baker connects to `/var/run/docker.sock` (or `DOCKER_HOST`), so the same bakelets run inside a plain container.
 
 ``` yaml
 name: dev-box
@@ -84,9 +73,10 @@ The `local` key accepts a path string (e.g. `local: ~/my-project`) to set the wo
 Setting up a Java environment with MySQL can be done easily.
 ``` yaml
 name: onboard
-vm:
+remote:
   ip: 192.168.8.8
-  ports: 8080
+  user: ubuntu
+  private_key: ~/.ssh/id_rsa
 vars:
   - mysql_password:
       prompt: Type your password for mysql server

@@ -263,9 +263,10 @@ describe('cross-platform bakelet contract', function() {
         const withTables = loaded.filter(({ instance }) => Object.keys(instance.commands).length > 0);
 
         it('reports bakelet modules that export nothing constructable', function() {
-            // The 0-byte jenkins placeholders. product-scope.md deletes them;
-            // this asserts the known set so a NEW empty module is caught.
-            expect(empty).to.deep.equal(['tools/jenkins-job-builder.js']);
+            // The 0-byte jenkins placeholders were deleted with the scope
+            // reduction, so the known set is now empty and any NEW empty module
+            // — which makes the resolver throw a bare TypeError — fails here.
+            expect(empty).to.deep.equal([]);
         });
 
         withTables.forEach(({ name, instance }) => {
