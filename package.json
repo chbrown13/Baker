@@ -10,12 +10,7 @@
     "test": "mocha test/bake/*.js",
     "int-test": "mocha test/integration/*.js",
     "commit": "git-cz",
-    "release": "standard-version",
-    "build-macos": "pkg --targets node10-macos-x64 --output ./installers/macos/bin/baker ./package.json",
-    "build-win": "pkg --targets node10-win-x64 --output ./installers/win/bin/baker.exe ./package.json",
-    "build-linux": "pkg --targets node10-linux-x64 --output ./installers/linux/executable/baker ./package.json",
-    "package-macos": "npm run build-macos && ./installers/macos/package.sh",
-    "package-linux": "npm run build-linux && cp ./installers/linux/executable/baker ./installers/linux/deb-template/baker/usr/bin/baker && dpkg --build installers/linux/deb-template/baker && mv ./installers/linux/deb-template/baker.deb ./installers/linux/deb/"
+    "release": "standard-version"
   },
   "repository": {
     "type": "git",
@@ -54,23 +49,12 @@
     "validator": "^12.2.0",
     "yargs": "^15.1.0"
   },
-  "pkg": {
-    "assets": [
-      "config/**",
-      "remotes",
-      "node_modules/node-virtualbox/config/**"
-    ],
-    "scripts": "lib/**"
-  },
   "bin": "baker.js",
   "devDependencies": {
     "chai": "^4.1.2",
     "commitizen": "^4.0.3",
     "cz-conventional-changelog": "^3.1.0",
-    "grunt": "^1.0.4",
-    "innosetup-compiler": "^5.6.1",
     "mocha": "^7.0.1",
-    "pkg": "^4.4.3",
     "request": "^2.88.2",
     "standard-version": "^7.1.0"
   },
