@@ -7,7 +7,7 @@ switching to a container or a remote host is a one-key change.
 > **Before you start:** this walkthrough sticks to the *portable* sections, which need neither
 > Ansible nor sudo — just a package manager. Adding `lang:` or `services:` moves you into the
 > playbook-backed tier, which needs both and a Linux target. See
-> [Installation](installation.md#local).
+> [Installation](installation.md#extra-setup--only-if-you-are-told-you-need-it).
 
 ## 1. Create a `baker.yml`
 

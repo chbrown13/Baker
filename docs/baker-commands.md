@@ -114,7 +114,7 @@ $ baker check org/profiles@PM3:env.yml
     Try: baker check org/profiles:env.yml
 ```
 
-So where assignments can vary by branch on the template repo — `baker bake org/template@PM3` —
+So where assignments can vary by branch on the template repo — `baker bake your-org/configs@PM3` —
 profiles cannot. Keep one profile file per unit on `master`.
 
 ### A target that cannot be run is an error
@@ -123,8 +123,8 @@ Only the **absence** of a target selects local mode. A target that is not a prof
 refused, and opunit is not spawned:
 
 ```
-$ baker check org/agent-template
-==> org/agent-template is not an opunit profile address.
+$ baker check your-org/configs
+==> your-org/configs is not an opunit profile address.
     `check` takes <owner>/<repo>:<file>.yml — a file on the repository's master branch, at any path.
     Omit the argument to run ./test/opunit.yml against this machine.
 ```

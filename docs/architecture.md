@@ -209,6 +209,22 @@ Three implementation patterns appear in the tree:
 3. **Ad-hoc / no playbook** — call an Ansible module directly, or just `this.exec()` a shell line.
    (`maven.js`, `agentic-tool.js`)
 
+## On-disk state
+
+Everything Baker writes lives under `~/.baker/`. Nothing is transmitted anywhere — there is no
+telemetry, and the logs below stay on the machine that produced them.
+
+| Path | Contents |
+|------|----------|
+| `~/.baker/<name>/` | Per-environment state directory |
+| `~/.baker/cache/` | Cloned repositories, keyed by host and repo path — one directory per repo, whatever the ref |
+| `~/.baker/cache/fetch/` | Single-file fetches (raw URL, gist, snippet), keyed by a hash of the URL |
+| `~/.baker/bake.log` | Failure output, with `env:` values redacted |
+| `~/.baker/cleanup.log` | What `baker cleanup` removed, with a restore hint per item |
+| `~/.baker/data/index.json` | Registry of known environments |
+
+The cache is disposable: `rm -rf ~/.baker/cache` costs one re-clone and nothing else.
+
 ## Environment index
 
 `~/.baker/data/index.json` is a flat JSON array of known environments:
