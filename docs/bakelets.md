@@ -71,7 +71,10 @@ tools:
 | `jekyll` | — | Jekyll static site generator |
 | `maven` | — | Maven build tool |
 | `ansible` | e.g. `ansible2` | Ansible itself, on the target |
+| `cpp` | — | C++ toolchain — compiler, headers, make. See below |
 | `node` | — | Node.js and npm, sudo-free counterpart to `lang: nodejs` |
+| `python` | — | Python 3 and pip, sudo-free counterpart to `lang: python` |
+| `pip` | — | Python packages from PyPI — requires a package list, see below |
 | `opunit` | — | The verifier `baker check` shells out to |
 | `baker` | — | Baker itself — requires `source:`, see below |
 | `docker-extension` | — | A Docker Desktop extension — requires `address:`, see below |
@@ -80,9 +83,47 @@ tools:
 | `claude-code` | — | Agentic coding CLI — see below |
 | `opencode` | — | Agentic coding CLI — see below |
 
-`jupyter`, `latex`, `maven`, `ansible`, `node`, and `opunit` are **exec-based**: one idempotent
-command per package manager, no Ansible and no playbook. `jekyll`, `dazed`, and `defects4j` are
-still playbook-backed and need a Linux target.
+`jupyter`, `latex`, `maven`, `ansible`, `cpp`, `node`, `python`, `pip`, and `opunit` are
+**exec-based**: one idempotent command per package manager, no Ansible and no playbook. `jekyll`,
+`dazed`, and `defects4j` are still playbook-backed and need a Linux target.
+
+### `cpp`, `python`, `pip`
+
+```yaml
+tools:
+  - cpp
+  - python
+  - pip:
+      packages:
+        - jsonschema
+        - pytest
+  - pip: jsonschema        # shorthand for a single package
+```
+
+These are in `tools:` rather than `packages:` because their names genuinely differ per manager,
+and a `packages:` entry would mean repeating the mapping in every config that needs a compiler:
+
+| | apt | dnf | pacman | apk | brew | choco |
+|---|---|---|---|---|---|---|
+| `cpp` | `build-essential` | `gcc-c++ make` | `base-devel` | `build-base` | `gcc` | `mingw` |
+| `python` | `python3 python3-pip` | `python3 python3-pip` | `python python-pip` | `python3 py3-pip` | `python3` | `python3` |
+
+Entries within a category run **top to bottom**, so `python` before `pip:` is what guarantees the
+interpreter exists first.
+
+`pip` installs with `--user` and needs no elevation anywhere. Where PEP 668 marks the interpreter
+externally managed — Debian 12+, Ubuntu 23.04+, recent Fedora, Homebrew Python — it retries with
+`--break-system-packages`, still a per-user install. It has no presence check: pip is already
+idempotent, and a package name is not an import name, so guessing one would be wrong as often as
+right.
+
+> **`cpp` cannot see a compiler's version.** It skips when `g++` is on PATH, even if that compiler
+> is too old for your standard — Ubuntu 20.04's `build-essential` is GCC 9, which fails C++20.
+> Assert the version with `baker check`.
+
+On macOS, `g++` normally already exists as part of the Xcode Command Line Tools, which `git` pulls
+in, so `cpp` is usually a no-op there. Where it is not, Homebrew's `gcc` is what gets installed —
+`xcode-select --install` is interactive and not something a bake should drive.
 
 ### `node`, `opunit`, `baker`
 

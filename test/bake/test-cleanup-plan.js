@@ -442,12 +442,18 @@ describe('cleanup plan construction', function() {
             expect(await fs.pathExists(clone)).to.equal(false);
         });
 
-        it('uses the box-relative destination in a non-local mode', async function() {
-            // With an ansibleSSHConfig, install() clones to `dest || name` on
-            // the target rather than resolving against a host path.
+        it('uses the target-relative destination in a non-local mode', async function() {
+            // install() clones to `dest || basename(repo)` inside the target and
+            // never resolves against a host path, so cleanup uses the same.
+            //
+            // Changed 2026-08-10: the fallback used to be the ENVIRONMENT NAME,
+            // an artifact of the Ansible git module (which required a dest) on
+            // the deleted control-VM path. `basename(repo)` is what `git clone`
+            // itself does with no destination, and is what local mode already
+            // used — so all three modes now agree.
             const bakelet = new GitResource('envname', { hostname: 'h' }, '');
             await bakelet.prepare({ git: 'https://example.com/x.git' }, []);
-            expect(bakelet.cloneDestination()).to.equal('envname');
+            expect(bakelet.cloneDestination()).to.equal('x');
 
             const withDest = new GitResource('envname', { hostname: 'h' }, '');
             await withDest.prepare({ git: { repo: 'https://example.com/x.git', dest: '/srv/app' } }, []);

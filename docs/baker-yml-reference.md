@@ -98,6 +98,7 @@ Array of bakelet names:
 |-------|---------|-------------|
 | `ansible{version}` | `ansible2` | Ansible |
 | `claude-code` | `claude-code` | Claude Code agentic CLI — see below |
+| `cpp` | `cpp` | A C++ toolchain — compiler, headers, make |
 | `dazed{version}` | `dazed2` | Dazed tool |
 | `defects4j{version}` | `defects4j2` | Defects4J bug database |
 | `jekyll` | `jekyll` | Jekyll static site generator |
@@ -106,9 +107,38 @@ Array of bakelet names:
 | `maven` | `maven` | Maven build tool |
 | `node` | `node` | Node.js and npm — the sudo-free counterpart to `lang: nodejs` |
 | `opunit` | `opunit` | The verifier `baker check` shells out to |
+| `pip` | — | Python packages from PyPI — takes a package or a `packages:` list |
+| `python` | `python` | Python 3 and pip — the sudo-free counterpart to `lang: python` |
 | `baker` | `baker` | Baker itself — takes a required `source:` |
 | `docker-extension` | — | A Docker Desktop extension — takes a required `address:` |
 | `opencode` | `opencode` | OpenCode agentic CLI — see below |
+
+**Language toolchains** (`cpp`, `python`, `node`) exist because those package names
+genuinely differ between managers — Debian's `build-essential` is `gcc-c++` on Fedora and
+`base-devel` on Arch, and Python is `python3` everywhere except Arch and Chocolatey. A bare
+`packages:` entry cannot express that without repeating the mapping in every config.
+
+```yaml
+tools:
+  - cpp
+  - python
+  - pip:
+      packages:
+        - jsonschema
+        - pytest
+```
+
+Entries within a category run **top to bottom**, so listing `python` before `pip:` is what
+guarantees the interpreter exists first.
+
+`pip` installs with `--user`, so it needs no elevation on any platform. Where PEP 668 marks
+the interpreter externally managed — Debian 12+, Ubuntu 23.04+, recent Fedora, Homebrew
+Python — it retries with `--break-system-packages`, which is still a per-user install.
+
+> **A presence check cannot see a version.** `cpp` skips when `g++` is already on PATH, even
+> if that compiler is too old for the standard your project needs — Ubuntu 20.04's
+> `build-essential` is GCC 9, which fails C++20. Assert versions with
+> [`baker check`](baker-commands.md#baker-check) rather than assuming the bakelet caught it.
 
 ```yaml
 tools:
