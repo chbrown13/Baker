@@ -152,6 +152,11 @@ describe('cleanup apply', function() {
     });
 
     describe('AC-13: --yes selects only safe defaults', function() {
+        // opencode's plan now includes its own config directory, which is
+        // offered only when it exists. Without a temp home this test would pass
+        // or fail depending on whether the developer running it happens to use
+        // opencode.
+        withTempHome();
 
         it('marks files, config, and env as default-yes and tools as default-no', async function() {
             await fs.outputFile(path.join(bakePath, 'a.md'), 'a');

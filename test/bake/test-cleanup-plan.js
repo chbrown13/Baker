@@ -252,9 +252,90 @@ describe('cleanup plan construction', function() {
             await bakelet.prepare({ opencode: { install: 'npm', repo: `https://example.com/c.git:${repo}` } }, []);
 
             const plan = await bakelet.plan();
-            expect(plan).to.have.lengthOf(2);
+            expect(plan).to.have.lengthOf(3);
             expect(plan[0].kind).to.equal('exec');
             expect(plan[1].kind).to.equal('repo');
+            // Third entry is the tool's own config dir, which is a separate
+            // decision again — the clone here goes somewhere else entirely.
+            expect(plan[2].bakelet).to.contain('config dir');
+        });
+
+        // The tool's own config directory. Uninstalling opencode while leaving
+        // ~/.config/opencode behind leaves the settings and any saved login on
+        // a machine the user believes they cleaned.
+        // Added by Claude Code (claude-opus-5[1m])
+        describe('the tool config directory', function() {
+            let origHome, tmpHome;
+
+            beforeEach(function() {
+                origHome = process.env.HOME;
+                tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-cfgdir-home-'));
+                process.env.HOME = tmpHome;
+            });
+
+            afterEach(function() {
+                if (origHome === undefined) delete process.env.HOME;
+                else process.env.HOME = origHome;
+                fs.removeSync(tmpHome);
+            });
+
+            async function planFor(config) {
+                const bakelet = localTool(Opencode, envRoot);
+                await bakelet.prepare({ opencode: config }, []);
+                return bakelet.plan();
+            }
+
+            function configDirEntry(plan) {
+                return plan.find((e) => String(e.bakelet).includes('config dir'));
+            }
+
+            it('offers it when it exists', async function() {
+                fs.ensureDirSync(path.join(tmpHome, '.config/opencode'));
+                const entry = configDirEntry(await planFor({ install: 'npm' }));
+
+                expect(entry.kind).to.equal('paths');
+                expect(entry.paths).to.deep.equal(['~/.config/opencode']);
+            });
+
+            it('never removes it without being asked', async function() {
+                fs.ensureDirSync(path.join(tmpHome, '.config/opencode'));
+                const entry = configDirEntry(await planFor({ install: 'npm' }));
+
+                expect(entry.default).to.equal(false);
+            });
+
+            it('says Baker did not create it, and what is inside', async function() {
+                fs.ensureDirSync(path.join(tmpHome, '.config/opencode'));
+                const entry = configDirEntry(await planFor({ install: 'npm' }));
+
+                expect(entry.prompt).to.contain('not something Baker created');
+                expect(entry.prompt).to.contain('saved login');
+            });
+
+            it('reports no inverse when the directory is absent', async function() {
+                const entry = configDirEntry(await planFor({ install: 'npm' }));
+
+                expect(entry.kind).to.equal('none');
+                expect(entry.reason).to.contain('not present');
+            });
+
+            it('is a separate decision from the binary', async function() {
+                fs.ensureDirSync(path.join(tmpHome, '.config/opencode'));
+                const plan = await planFor({ install: 'npm' });
+
+                expect(plan.filter((e) => e.kind !== 'none')).to.have.lengthOf(2);
+            });
+
+            // planRepoRemoval refuses a clone holding uncommitted work. A blind
+            // rm -rf on the same path would walk straight past that guard.
+            it('defers to the config repo entry when the clone lives there', async function() {
+                const dest = path.join(tmpHome, '.config/opencode');
+                const repo = makeRepo(dest);
+                const plan = await planFor({ install: 'npm', repo: `https://example.com/c.git:${repo}` });
+
+                expect(configDirEntry(plan)).to.equal(undefined);
+                expect(plan.filter((e) => e.kind === 'repo')).to.have.lengthOf(1);
+            });
         });
 
         it('defaults the tool uninstall to No and says why (AC-7)', async function() {
