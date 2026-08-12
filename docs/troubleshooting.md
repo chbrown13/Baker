@@ -40,17 +40,33 @@ $ baker bake
 
 **Workaround:** write `baker.yml` by hand from the [reference](baker-yml-reference.md).
 
-### `baker run` works only on `docker:`
-
-It wraps the script as `cd /<project-basename>; <script>` — the path where your project was mounted
-inside the old control VM. On `local:` that directory does not exist:
+### `baker run` says the environment is not baked
 
 ```
-==> Error: spawnSync /bin/sh ENOENT
+==> Error: my-project is not recorded as baked. Run `baker bake` first, or pass --force to run anyway.
 ```
 
-On `remote:` it fails more quietly: the provider's `ssh()` takes no arguments, so your command is
-discarded and an interactive shell opens instead.
+`run` acts on an environment that already exists. If you have baked and still see this, the record
+is keyed on the `name:` in `baker.yml` — two checkouts sharing a name overwrite each other's entry,
+and clearing `~/.baker` removes it entirely. `baker run <cmdlet> --force` runs regardless.
+
+### `baker run` hangs with no output
+
+The command is waiting for input that cannot arrive. `run` streams output but attaches no keyboard,
+so anything that prompts — a script calling `read`, an `npm login`, a `git` command that opens a
+pager — will print its prompt and then sit there. Rewrite the command to take its values from
+`env:` or from arguments.
+
+### `baker run` says the working directory does not exist
+
+```
+==> Error: /my-project does not exist in my-project.
+```
+
+On `docker:` and `remote:` the command runs in `/<project-basename>`, the same place
+`config: files:` writes to. Nothing creates that directory on its own — if your config has no
+`files:` entry, there is nothing there to run in. Add one, or use `local:`, where the working
+directory is your project folder and always exists. `--force` does not skip this check.
   port: 22
 ```
 

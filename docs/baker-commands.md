@@ -273,15 +273,15 @@ forwards, and checkbox lists of languages, services, and tools.
 Run a named command from the `commands:` block of `baker.yml`.
 
 ```
-baker run [cmdlet]
+baker run [cmdlet] [--force]
 ```
 
 ```yaml
 name: dev
-docker: node:18
+local: .
 commands:
   test: npm test
-  serve: npm start
+  setup: ./scripts/setup.sh
 ```
 
 ```bash
@@ -289,10 +289,42 @@ baker run test
 baker run          # with no argument, lists the available cmdlets
 ```
 
-> **This command only works on `docker:`.** It wraps the script as
-> `cd /<project-basename>; <script>` — the path where your project was mounted inside the old
-> control VM. That directory does not exist on a local host, so `local:` fails with
-> `spawnSync /bin/sh ENOENT`.
->
-> On `remote:` it fails differently and more quietly: the remote provider's `ssh()` takes no
-> arguments, so the command is discarded and an interactive shell opens instead.
+Works on all three providers. Output **streams as it happens**, and the command's exit code
+becomes Baker's, so `baker run test` can be used in a script.
+
+### Where the command runs
+
+Each provider has a working directory, and it is the same one `config: files:` writes into:
+
+| Provider | Working directory |
+|----------|-------------------|
+| `local:` | your project directory — the resolved `local:` path |
+| `docker:` | `/<project-basename>` inside the container, via `docker exec -w` |
+| `remote:` | `/<project-basename>` on the host, via `cd` |
+
+That directory is a **starting point, not a constraint** — a command may `cd` further:
+
+```yaml
+commands:
+  setup: cd tools && ./install.sh
+```
+
+### Requirements
+
+`run` acts on an environment that already exists, so **bake first**. If Baker has no record of the
+environment it refuses and says so. That record is keyed on the `name:` in your `baker.yml`, so two
+checkouts sharing a name overwrite each other's entry — pass `--force` to run anyway when the
+record is wrong.
+
+`--force` skips only that check. If the working directory itself is missing, `run` still refuses:
+the command would have nowhere to run, and a missing directory is not something a flag can fix.
+
+> **Commands must not prompt for input.** `run` streams output but attaches no keyboard, so a
+> command that asks a question will print it and then appear to hang. Take values from `env:` or
+> from the script's own arguments instead.
+
+`run` writes no log. Re-run the command and copy what you see.
+
+`baker run hello` is a built-in smoke test: it prints `hello` on your machine without contacting
+any provider, which makes it a way to check Baker is wired up before a transport works. It shadows
+a `hello` entry of your own if you define one.

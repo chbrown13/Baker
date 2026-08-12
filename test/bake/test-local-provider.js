@@ -171,6 +171,29 @@ describe('LocalProvider', function() {
             await provider.bake(testBakeDir, null, false);
             process.cwd = origCwd;
         });
+
+        // A local bake used to leave no trace at all — no index entry and no
+        // .running marker — so nothing could tell a baked project from an
+        // unbaked one. `baker run` needs exactly that distinction.
+        // Added by Claude Code (claude-opus-5[1m])
+        it('records the environment in the index, with the resolved location (AC-11)', async function() {
+            const Utils = require('../../lib/modules/utils/utils');
+            const name = `${testBoxName}-indexed`;
+            const locationPath = path.join(tmpDir, 'bake-indexed-location');
+            const yml = `name: ${name}\nlocal: ${locationPath}\n`;
+            await fs.writeFile(path.join(testBakeDir, 'baker.yml'), yml);
+
+            await Utils.removeFromIndex(name).catch(() => {});
+            await provider.bake(testBakeDir, null, false);
+
+            const entry = await Utils.FindInIndex(name);
+            expect(entry, 'bake should record the environment').to.not.equal(null);
+            expect(entry.type).to.equal('local');
+            expect(entry.path).to.equal(locationPath);
+
+            await Utils.removeFromIndex(name).catch(() => {});
+            await fs.remove(locationPath).catch(() => {});
+        });
     });
 
     });
@@ -549,11 +572,28 @@ describe('retired providers through the CLI', function() {
         expect(runBake(cliDir)).to.not.contain('at Function.chooseProvider');
     });
 
-    it('still lists only the retained commands in --help', function() {
+    // Reads the verbs out of the Commands: block rather than grepping the whole
+    // help blob. The blob-wide check was a false-positive waiting to happen: a
+    // description containing the word "command", "package", "status", or
+    // "server" would fail it even though no such verb is registered — which is
+    // exactly what happened when `run` gained the description "Run a named
+    // command from the commands: block of baker.yml".
+    // Modified by Claude Code (claude-opus-5[1m])
+    function registeredVerbs() {
         const help = child_process.execSync(`node "${bakerBin}" --help 2>&1 || true`, { encoding: 'utf8' });
+        const block = (help.split(/^Commands:$/m)[1] || '').split(/^Options:$/m)[0];
+        return block.split('\n')
+            .map((line) => line.trim().split(/\s+/))          // ["<bin>", "<verb>", ...]
+            .filter((parts) => parts.length > 1)
+            .map((parts) => parts[1])
+            .filter(Boolean);
+    }
+
+    it('still lists only the retained commands in --help', function() {
+        const verbs = registeredVerbs();
         ['setup', 'setupmac', 'server', 'boxes', 'import', 'package', 'halt', 'cluster',
          'status', 'vault', 'command'].forEach((gone) => {
-            expect(help, `${gone} should no longer be a command`).to.not.contain(` ${gone} `);
+            expect(verbs, `${gone} should no longer be a command`).to.not.include(gone);
         });
     });
 

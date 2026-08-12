@@ -369,10 +369,19 @@ commands:
   lint: eslint .
 ```
 
-`baker run test` executes `cd /<project-dir>; mvn test` on the target. `baker run` with no
-argument lists what's available.
+`baker run` with no argument lists what's available. Output streams as it happens, and the
+command's exit code becomes Baker's.
 
-Unlike `start:`, these are never run automatically.
+Each command runs in the **environment root** — the same directory `config: files:` writes into:
+your project directory on `local:`, and `/<project-basename>` on `docker:` and `remote:`. That is a
+starting point, not a constraint; a command may `cd` further, as `serve` does above.
+
+Unlike `start:`, these are never run automatically. `run` also requires the environment to have
+been baked; see [`baker run`](baker-commands.md#baker-run).
+
+> **A command must not prompt for input.** `baker run` streams output but does not attach a
+> keyboard, so a command that asks a question will print it and then appear to hang. Take values
+> from `env:` or from the script's own arguments instead.
 
 ### `vars:` — Extra Ansible Variables
 
