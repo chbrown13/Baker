@@ -244,6 +244,110 @@ describe('cleanup plan construction', function() {
         });
     });
 
+    // The exec-based tools tier (PackageTool) shipped a day after cleanup and
+    // never got a removal seam, so `tools: opunit` reported "no inverse"
+    // despite cleanup-command.md:118 listing tools: as in scope.
+    //
+    // Presence is stubbed rather than probed for real: otherwise these pass or
+    // fail depending on what the developer happens to have installed.
+    // Added by Claude Code (claude-opus-5[1m])
+    describe('PackageTool removal', function() {
+        const Opunit = require('../../lib/bakelets/tools/opunit');
+        const Node   = require('../../lib/bakelets/tools/node');
+        const Python = require('../../lib/bakelets/tools/python');
+        const Maven  = require('../../lib/bakelets/tools/maven');
+
+        function tool(Klass, { manager = 'apt', present = true } = {}) {
+            const bakelet = localTool(Klass, envRoot);
+            bakelet.platform = { manager, os: 'linux', shell: 'sh' };
+            bakelet.execCapture = async () => {
+                if (!present) throw new Error('command not found');
+                return '';
+            };
+            return bakelet;
+        }
+
+        it('offers an npm uninstall for opunit', async function() {
+            const [entry] = await tool(Opunit).plan();
+
+            expect(entry.kind).to.equal('exec');
+            expect(entry.command).to.equal('npm uninstall -g opunit');
+        });
+
+        it('never removes a tool without being asked', async function() {
+            const [entry] = await tool(Opunit).plan();
+
+            expect(entry.default).to.equal(false);
+        });
+
+        it('names what breaks, rather than a generic warning', async function() {
+            const [opunit] = await tool(Opunit).plan();
+            const [node] = await tool(Node).plan();
+
+            expect(opunit.prompt).to.contain('baker check');
+            expect(node.prompt).to.contain('opencode');
+        });
+
+        it('reports nothing to do when the binary is already gone', async function() {
+            const [entry] = await tool(Opunit, { present: false }).plan();
+
+            expect(entry.kind).to.equal('none');
+            expect(entry.reason).to.contain('not installed');
+        });
+
+        it('matches the uninstall to the detected package manager', async function() {
+            const [apt] = await tool(Node, { manager: 'apt' }).plan();
+            const [brew] = await tool(Node, { manager: 'brew' }).plan();
+
+            expect(apt.command).to.contain('apt-get remove -y nodejs npm');
+            expect(brew.command).to.equal('brew uninstall node');
+        });
+
+        it('reports no inverse on a manager the tool does not support', async function() {
+            // ansible has no choco entry either way.
+            const Ansible = require('../../lib/bakelets/tools/ansible');
+            const [entry] = await tool(Ansible, { manager: 'choco' }).plan();
+
+            expect(entry.kind).to.equal('none');
+            expect(entry.reason).to.contain('no uninstall command');
+        });
+
+        it('offers the install command as the restore hint', async function() {
+            const [entry] = await tool(Maven).plan();
+
+            expect(entry.restore).to.contain('apt-get install -y maven');
+        });
+
+        // The one deliberate exception. apt and dnf are written in Python, so
+        // removing the interpreter removes the package manager.
+        it('refuses to remove the system python', async function() {
+            const [entry] = await tool(Python).plan();
+
+            expect(entry.kind).to.equal('refused');
+            expect(entry.reason).to.contain('OS package manager');
+        });
+
+        it('keeps the python refusal out of reach of --yes --all', async function() {
+            const [entry] = await tool(Python).plan();
+
+            // cleanup.js filters `refused` out of the selectable set before
+            // --all is applied, so a refused entry has no default to flip.
+            expect(entry).to.not.have.property('default');
+        });
+
+        it('leaves a tool that declares no inverse reporting none', async function() {
+            const PackageTool = require('../../lib/bakelets/tools/package-tool');
+            class Bare extends PackageTool {
+                constructor(...args) { super(...args); this.binName = 'bare'; }
+                get commands() { return { apt: 'install bare' }; }
+            }
+            const [entry] = await tool(Bare).plan();
+
+            expect(entry.kind).to.equal('none');
+            expect(entry.reason).to.contain('no inverse available');
+        });
+    });
+
     describe('AC-7 / AC-8 / AC-12: tools', function() {
 
         it('makes the binary and the config repo separate entries (AC-12)', async function() {
