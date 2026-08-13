@@ -7,7 +7,7 @@ yargs
   .version()
   .epilog(
       (homepage ? `| Homepage: ${homepage}\n` : '') +
-      (`| Documentation: https://docs.getbaker.io/\n`) +
+      (`| Documentation: https://github.com/chbrown13/Baker/tree/main/docs\n`) +
       (version ? `| Version: ${version}` : '')
     )
   .demandCommand(1, 'Did you forget to specify a command?')

@@ -1,7 +1,7 @@
 {
   "name": "baker",
-  "version": "0.7.2",
-  "description": "baker creates ansible powered virtual machines",
+  "version": "0.8.0",
+  "description": "baker configures development environments",
   "engines": {
     "node": ">=7.10.0"
   },
@@ -14,19 +14,19 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ottomatica/Baker.git"
+    "url": "git+https://github.com/chbrown13/Baker.git"
   },
   "keywords": [
     "baker",
     "ansible",
     "configuration"
   ],
-  "author": "Ottomatica",
+  "author": "Ottomatica and chbrown13",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/ottomatica/Baker/issues"
+    "url": "https://github.com/chbrown13/Baker/issues"
   },
-  "homepage": "https://getbaker.io/",
+  "homepage": "https://github.com/chbrown13/Baker/",
   "dependencies": {
     "bluebird": "^3.7.2",
     "chalk": "^3.0.0",
