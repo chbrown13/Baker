@@ -19,11 +19,15 @@ lib/
     validator.js                baker.yml validation
     print.js, spinner.js        Output helpers
     configstore.js              Persistent settings
-    init/interactive.js         `baker init` prompts
+    init/                       `baker init`'s three layers:
+      detect.js                   read the repo, propose, decide nothing
+      offer.js                    enumerate lib/bakelets/tools/, annotate each
+      render.js                   answers object -> baker.yml string
     configuration/ansible.js    Four families of Ansible invocation
     utils/
       source.js                 Unified baker.yml source resolver
-      git.js                    Clone / tree-URL / gist / snippet fetching
+      git.js                    Clone / tree-URL / gist / snippet fetching,
+                                ls-remote ref resolution for `baker check`
       utils.js                  Env index, prompts, file helpers
     providers/
       provider.js               Base class
@@ -36,7 +40,7 @@ lib/
     lang/ tools/ services/ packages/ config/ resources/ env/
 
 remotes/bakelets-source/        Ansible playbooks and Mustache templates
-config/                         Templates
+config/                         Ansible fragments and host scaffolding
 test/bake/                      Mocha suites (npm test)
 test/integration/               Integration suites (npm run int-test)
 ```

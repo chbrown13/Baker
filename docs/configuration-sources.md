@@ -171,12 +171,19 @@ Everything Baker clones or fetches goes under `~/.baker/cache/`, **never your wo
 ```
 ~/.baker/cache/<host>/<owner>/<repo>/   clones
 ~/.baker/cache/fetch/<hash>/            single-file fetches (raw URL, gist, snippet)
+~/.baker/cache/profiles/<owner>/<repo>/<sha>/<file>
+                                        opunit profiles for `baker check`
 ```
 
 This matters when you run Baker from inside a repository you care about — nothing is written
 there. Re-running the same address updates the cached clone rather than failing, and local
 modifications inside the cache are discarded on the next run, so a dirtied cache recovers by
 itself.
+
+The profile directory is **content-addressed**: the path names the commit, so a cached profile is
+the right bytes by construction and is never revalidated. `baker check` still runs one
+`git ls-remote` per invocation, because that is what proves the profile is current — only the
+download is skipped.
 
 The cache is disposable. Deleting it costs one re-clone:
 

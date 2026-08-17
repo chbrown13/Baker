@@ -19,6 +19,7 @@ start: jupyter notebook --no-browser
 ```
 
 ```bash
+baker init      # write that file for you, interactively
 baker bake      # configure it
 baker check     # verify the result
 baker cleanup   # undo what the bake placed
