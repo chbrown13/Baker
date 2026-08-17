@@ -44,7 +44,7 @@ $ baker bake your-org/configs
 If you already have Docker installed, the `docker:` key provisions a container on your **local Docker daemon**. Baker connects to `/var/run/docker.sock` (or `DOCKER_HOST`), so the same bakelets run inside a plain container.
 
 ``` yaml
-name: dev-box
+name: dev-container
 docker: node:18       # or: docker: {} for ubuntu:latest, or an object with image/ports
 lang:
   - python3
@@ -128,7 +128,7 @@ the config deletes the file. See [docs/bakelets.md](docs/bakelets.md#files--decl
 
 ## Agentic coding tools
 
-Baker can install agentic coding CLIs into whatever environment it provisions (host, container, or box) as `tools:` bakelets. Currently `claude-code` and `opencode` are supported.
+Baker can install agentic coding CLIs into whatever environment it provisions (local, docker, or remote) as `tools:` bakelets. Currently `claude-code` and `opencode` are supported.
 
 ``` yaml
 name: dev-env
@@ -158,7 +158,7 @@ baker bake https://.../tree/...         # tree URL, gist, snippet, or raw file U
 `.yml` is rejected, because that form belongs to `baker check`. Clones and fetches go to
 `~/.baker/cache/`, never your working directory.
 
-Local paths always win over GitHub shorthand, so a real `./owner/repo` directory is used as-is. The explicit `--local`, `--repo`, `--file`, and `--box` flags still work as overrides.
+Local paths always win over GitHub shorthand, so a real `./owner/repo` directory is used as-is. The explicit `--local`, `--repo`, `and --file` flags can work as overrides.
 
 ## Verifying an environment
 
