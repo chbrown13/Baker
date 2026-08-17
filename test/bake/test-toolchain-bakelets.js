@@ -4,6 +4,8 @@ const expect = chai.expect;
 const Cpp    = require('../../lib/bakelets/tools/cpp');
 const Python = require('../../lib/bakelets/tools/python');
 const Pip    = require('../../lib/bakelets/tools/pip');
+const Npm    = require('../../lib/bakelets/tools/npm');
+const Git    = require('../../lib/bakelets/tools/git');
 
 const LINUX   = { os: 'linux',   manager: 'apt',    shell: 'sh',         family: 'debian', sudo: true };
 const FEDORA  = { os: 'linux',   manager: 'dnf',    shell: 'sh',         family: 'rhel',   sudo: true };
@@ -189,6 +191,148 @@ describe('toolchain bakelets', function() {
                 const { calls } = await run(Pip, { pip: 'jsonschema' }, platform);
                 expect(calls[0], platform.os).to.not.contain("'");
             }
+        });
+    });
+
+    describe('tools: npm', function() {
+
+        it('accepts the string shorthand', async function() {
+            const { calls } = await run(Npm, { npm: 'typescript' }, LINUX);
+            expect(calls).to.have.lengthOf(1);
+            expect(calls[0]).to.equal('npm install -g typescript');
+        });
+
+        it('accepts a packages list', async function() {
+            const { calls } = await run(Npm, { npm: { packages: ['typescript', 'eslint'] } }, LINUX);
+            expect(calls[0]).to.contain('typescript eslint');
+        });
+
+        it('accepts a bare array', async function() {
+            const { calls } = await run(Npm, { npm: ['typescript'] }, LINUX);
+            expect(calls[0]).to.contain('typescript');
+        });
+
+        // The mirror of pip's --user answer: a different mechanism, same result.
+        it('needs no elevation and never prefixes sudo', async function() {
+            for (const platform of ALL) {
+                const { calls, bakelet } = await run(Npm, { npm: 'typescript' }, platform);
+                expect(bakelet.requiresElevation, platform.manager).to.equal(false);
+                expect(calls[0], platform.manager).to.not.contain('sudo');
+            }
+        });
+
+        // Where pip must know the OS to pick python vs python3, npm need not:
+        // the binary is `npm` on all seven targets.
+        it('issues one identical command on every platform', async function() {
+            const commands = new Set();
+            for (const platform of ALL) {
+                const { calls } = await run(Npm, { npm: 'typescript' }, platform);
+                commands.add(calls[0]);
+            }
+            expect(Array.from(commands)).to.deep.equal(['npm install -g typescript']);
+        });
+
+        it('asks for no platform, unlike pip', function() {
+            const bakelet = new Npm('env', null, '');
+            expect(bakelet.commands).to.deep.equal({});
+            expect(bakelet.needsPlatform).to.equal(false);
+        });
+
+        it('refuses an entry with no packages, naming both accepted forms', async function() {
+            const bakelet = new Npm('env', null, '');
+            bakelet.platform = LINUX;
+            await bakelet.load({ npm: null }, []);
+
+            let error = null;
+            try { await bakelet.install(); } catch (err) { error = err; }
+
+            expect(error).to.be.an('error');
+            expect(error.message).to.contain('npm: typescript');
+            expect(error.message).to.contain('packages:');
+        });
+
+        it('contains no single quotes on either shell', async function() {
+            for (const platform of [LINUX, WINDOWS]) {
+                const { calls } = await run(Npm, { npm: 'typescript' }, platform);
+                expect(calls[0], platform.os).to.not.contain("'");
+            }
+        });
+    });
+
+    describe('tools: git', function() {
+
+        it('installs the git package on every supported manager', async function() {
+            for (const platform of ALL) {
+                const { calls } = await run(Git, 'git', platform);
+                expect(calls, platform.manager).to.have.lengthOf(1);
+                expect(calls[0], platform.manager).to.match(/\bgit\b/);
+            }
+        });
+
+        it('guards the install with a presence check', async function() {
+            const { calls } = await run(Git, 'git', LINUX);
+            expect(calls[0]).to.contain('command -v git');
+            expect(calls[0]).to.contain('sudo apt-get install -y git');
+        });
+
+        it('drops the sudo prefix when the target is root', async function() {
+            const ROOT = { os: 'linux', manager: 'apt', shell: 'sh', family: 'debian', sudo: false };
+            const { calls } = await run(Git, 'git', ROOT);
+            expect(calls[0]).to.not.match(/\bsudo\b/);
+        });
+
+        it('uses PowerShell constructs on Windows', async function() {
+            const { calls } = await run(Git, 'git', WINDOWS);
+            expect(calls[0]).to.contain('Get-Command git');
+            expect(calls[0]).to.contain('choco install -y git');
+            expect(calls[0]).to.not.contain('||');
+        });
+
+        // /usr/bin/git exists on a Mac that has never installed the Command Line
+        // Tools, and running it opens a GUI dialog. A bare `command -v` check
+        // would pass there and skip the install.
+        it('does not accept the Xcode Command Line Tools shim on macOS', async function() {
+            const { calls } = await run(Git, 'git', MACOS);
+            expect(calls[0]).to.contain('/usr/bin/git');
+            expect(calls[0]).to.contain('xcode-select -p');
+            expect(calls[0]).to.contain('brew install git');
+        });
+
+        it('applies the shim test on macOS only', async function() {
+            for (const platform of [LINUX, FEDORA, ARCH, ALPINE, WINDOWS]) {
+                const { calls } = await run(Git, 'git', platform);
+                expect(calls[0], platform.manager).to.not.contain('xcode-select');
+            }
+        });
+
+        it('keeps the macOS check free of single quotes', async function() {
+            const { calls } = await run(Git, 'git', MACOS);
+            expect(calls[0]).to.not.contain("'");
+        });
+
+        it('offers an inverse that defaults to No and says what breaks', async function() {
+            const bakelet = new Git('env', null, '');
+            bakelet.platform = LINUX;
+            bakelet.setBakeletName('git');
+            bakelet.execCapture = async () => 'present';
+
+            const plan = await bakelet.plan();
+            expect(plan).to.have.lengthOf(1);
+            expect(plan[0].kind).to.equal('exec');
+            expect(plan[0].default).to.equal(false);
+            expect(plan[0].command).to.contain('apt-get remove -y git');
+            expect(plan[0].prompt).to.contain('baker cleanup');
+        });
+
+        it('plans nothing when git is not installed', async function() {
+            const bakelet = new Git('env', null, '');
+            bakelet.platform = LINUX;
+            bakelet.setBakeletName('git');
+            bakelet.execCapture = async () => { throw new Error('not found'); };
+
+            const plan = await bakelet.plan();
+            expect(plan[0].kind).to.equal('none');
+            expect(plan[0].reason).to.contain('not installed');
         });
     });
 });

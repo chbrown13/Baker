@@ -72,8 +72,10 @@ tools:
 | `maven` | — | Maven build tool |
 | `ansible` | e.g. `ansible2` | Ansible itself, on the target |
 | `cpp` | — | C++ toolchain — compiler, headers, make. See below |
+| `git` | — | git itself — not to be confused with `resources: git:`, which clones. See below |
 | `node` | — | Node.js and npm, sudo-free counterpart to `lang: nodejs` |
 | `python` | — | Python 3 and pip, sudo-free counterpart to `lang: python` |
+| `npm` | — | npm packages, installed globally — requires a package list, see below |
 | `pip` | — | Python packages from PyPI — requires a package list, see below |
 | `opunit` | — | The verifier `baker check` shells out to |
 | `baker` | — | Baker itself — requires `source:`, see below |
@@ -83,11 +85,11 @@ tools:
 | `claude-code` | — | Agentic coding CLI — see below |
 | `opencode` | — | Agentic coding CLI — see below |
 
-`jupyter`, `latex`, `maven`, `ansible`, `cpp`, `node`, `python`, `pip`, and `opunit` are
-**exec-based**: one idempotent command per package manager, no Ansible and no playbook. `jekyll`,
-`dazed`, and `defects4j` are still playbook-backed and need a Linux target.
+`jupyter`, `latex`, `maven`, `ansible`, `cpp`, `git`, `node`, `python`, `npm`, `pip`, and `opunit`
+are **exec-based**: one idempotent command per package manager, no Ansible and no playbook.
+`jekyll`, `dazed`, and `defects4j` are still playbook-backed and need a Linux target.
 
-### `cpp`, `python`, `pip`
+### `cpp`, `python`, `pip`, `npm`
 
 ```yaml
 tools:
@@ -98,10 +100,17 @@ tools:
         - jsonschema
         - pytest
   - pip: jsonschema        # shorthand for a single package
+  - node
+  - npm:
+      packages:
+        - typescript
+        - eslint
+  - npm: typescript        # shorthand for a single package
 ```
 
-These are in `tools:` rather than `packages:` because their names genuinely differ per manager,
-and a `packages:` entry would mean repeating the mapping in every config that needs a compiler:
+`cpp` and `python` are in `tools:` rather than `packages:` because their names genuinely differ per
+manager, and a `packages:` entry would mean repeating the mapping in every config that needs a
+compiler:
 
 | | apt | dnf | pacman | apk | brew | choco |
 |---|---|---|---|---|---|---|
@@ -109,13 +118,22 @@ and a `packages:` entry would mean repeating the mapping in every config that ne
 | `python` | `python3 python3-pip` | `python3 python3-pip` | `python python-pip` | `python3 py3-pip` | `python3` | `python3` |
 
 Entries within a category run **top to bottom**, so `python` before `pip:` is what guarantees the
-interpreter exists first.
+interpreter exists first — and `node` before `npm:` for the same reason.
+
+`npm` is `pip`'s counterpart for the Node ecosystem: same two accepted forms, and it installs
+globally with `npm install -g`. It needs no elevation and never runs under `sudo` — npm's global
+prefix is per-user under nvm, fnm and volta and on Windows. Where the prefix *is* root-owned the
+install fails with `EACCES`; the fix is a user-owned prefix, not `sudo npm`, which leaves
+root-owned files in `~/.npm`. Unlike `pip` it needs no per-OS handling at all: the binary is `npm`
+on every target, Windows included, so one identical command runs everywhere.
+
+Neither `npm:` nor `pip:` has a presence check, and neither has a `baker cleanup` inverse. Both
+installers already converge on an already-installed package, and a package name is not a binary or
+import name in general, so guessing one would be wrong as often as right.
 
 `pip` installs with `--user` and needs no elevation anywhere. Where PEP 668 marks the interpreter
 externally managed — Debian 12+, Ubuntu 23.04+, recent Fedora, Homebrew Python — it retries with
-`--break-system-packages`, still a per-user install. It has no presence check: pip is already
-idempotent, and a package name is not an import name, so guessing one would be wrong as often as
-right.
+`--break-system-packages`, still a per-user install.
 
 > **`cpp` cannot see a compiler's version.** It skips when `g++` is on PATH, even if that compiler
 > is too old for your standard — Ubuntu 20.04's `build-essential` is GCC 9, which fails C++20.
@@ -124,6 +142,33 @@ right.
 On macOS, `g++` normally already exists as part of the Xcode Command Line Tools, which `git` pulls
 in, so `cpp` is usually a no-op there. Where it is not, Homebrew's `gcc` is what gets installed —
 `xcode-select --install` is interactive and not something a bake should drive.
+
+### `git`
+
+```yaml
+tools:
+  - git
+```
+
+Installs git itself. **Not the same as `resources: git:`**, which clones a repository — this
+installs the program that does the cloning. A config that clones, or that syncs an agentic tool's
+config repo, needs git on the machine first; nothing installed it before.
+
+Every manager packages it as plain `git`, so unlike `cpp` and `python` there is no name divergence.
+What makes it a bakelet rather than a `packages:` entry is the presence check:
+
+> **macOS ships `/usr/bin/git` as a stub.** It is on `PATH` on a machine that has never installed
+> the Xcode Command Line Tools, and running it opens a GUI installer dialog. An ordinary
+> `command -v git` check would pass there and skip the install, leaving a git that does not work.
+> `tools: git` additionally requires that git either is not `/usr/bin/git` or that `xcode-select -p`
+> reports the tools present — a test that does not trigger the dialog the way `git --version` does.
+
+Like `cpp`, this proves git *works*, not that it is recent enough. Assert a version with
+`baker check`.
+
+`baker cleanup` offers an inverse, defaulting to **No**, and names what removal breaks: cleanup
+itself uses git to check a clone for unpushed work before removing it. Clones are removed before
+tools, so a cleanup that removes git still runs in the right order.
 
 ### `node`, `opunit`, `baker`
 

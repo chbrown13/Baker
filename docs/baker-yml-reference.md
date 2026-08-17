@@ -101,11 +101,13 @@ Array of bakelet names:
 | `cpp` | `cpp` | A C++ toolchain — compiler, headers, make |
 | `dazed{version}` | `dazed2` | Dazed tool |
 | `defects4j{version}` | `defects4j2` | Defects4J bug database |
+| `git` | `git` | git itself — distinct from `resources: git:`, which clones |
 | `jekyll` | `jekyll` | Jekyll static site generator |
 | `jupyter` | `jupyter` | Jupyter notebook |
 | `latex` | `latex` | LaTeX typesetting |
 | `maven` | `maven` | Maven build tool |
 | `node` | `node` | Node.js and npm — the sudo-free counterpart to `lang: nodejs` |
+| `npm` | — | npm packages installed globally — takes a package or a `packages:` list |
 | `opunit` | `opunit` | The verifier `baker check` shells out to |
 | `pip` | — | Python packages from PyPI — takes a package or a `packages:` list |
 | `python` | `python` | Python 3 and pip — the sudo-free counterpart to `lang: python` |
@@ -126,19 +128,37 @@ tools:
       packages:
         - jsonschema
         - pytest
+  - node
+  - npm:
+      packages:
+        - typescript
+        - eslint
 ```
 
 Entries within a category run **top to bottom**, so listing `python` before `pip:` is what
-guarantees the interpreter exists first.
+guarantees the interpreter exists first — and `node` before `npm:` for the same reason.
 
 `pip` installs with `--user`, so it needs no elevation on any platform. Where PEP 668 marks
 the interpreter externally managed — Debian 12+, Ubuntu 23.04+, recent Fedora, Homebrew
 Python — it retries with `--break-system-packages`, which is still a per-user install.
 
+`npm` is the same idea for the Node ecosystem, accepting the same two forms. It installs with
+`npm install -g` and never runs under `sudo`: npm's global prefix is per-user under nvm, fnm
+and volta and on Windows. Where the prefix *is* root-owned the install fails with `EACCES`,
+and the fix is a user-owned prefix rather than `sudo npm`, which leaves root-owned files in
+`~/.npm`.
+
 > **A presence check cannot see a version.** `cpp` skips when `g++` is already on PATH, even
 > if that compiler is too old for the standard your project needs — Ubuntu 20.04's
-> `build-essential` is GCC 9, which fails C++20. Assert versions with
-> [`baker check`](baker-commands.md#baker-check) rather than assuming the bakelet caught it.
+> `build-essential` is GCC 9, which fails C++20. `git` has the same blind spot. Assert
+> versions with [`baker check`](baker-commands.md#baker-check) rather than assuming the
+> bakelet caught it.
+
+> **`tools: git` is not `resources: git:`.** The first installs the git program; the second
+> clones a repository with it. A config that clones needs both, in that order.
+> On macOS `tools: git` refuses to accept `/usr/bin/git` on a machine that has never
+> installed the Xcode Command Line Tools — that path is a stub which opens a GUI installer
+> dialog, and a plain `command -v git` check would pass on it.
 
 ```yaml
 tools:
