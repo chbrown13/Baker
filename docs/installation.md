@@ -50,7 +50,8 @@ npm link
 
 ## 3. Install opunit
 
-Baker uses opunit to check that an environment is set up correctly:
+Baker uses opunit to check that an environment is set up correctly. Version **0.9.4 or newer** is
+required; the command below installs the current one:
 
 ```bash
 npm install -g ottomatica/opunit

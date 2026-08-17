@@ -87,35 +87,69 @@ baker check [target]
 
 | Argument | Description |
 |----------|-------------|
-| `target` | A profile address `<user>/<repo>:<file.yml>`. Omit to run local checks. |
+| `target` | A profile address `<owner>/<repo>[@<ref>]:<file>.yml`. Omit to run local checks. |
 
-| Invocation | Delegates to | Runs against |
-|------------|--------------|--------------|
-| `baker check` | `opunit verify local` | the local machine, using `test/opunit.yml` |
-| `baker check <user>/<repo>:<file.yml>` | `opunit profile <address>` | the local machine, using a checks file fetched from GitHub |
+| Invocation | Runs against |
+|------------|--------------|
+| `baker check` | the local machine, using `./test/opunit.yml` |
+| `baker check <owner>/<repo>:<file>.yml` | the local machine, using a profile from the repository's default branch |
+| `baker check <owner>/<repo>@<ref>:<file>.yml` | the local machine, using a profile from the named branch or tag |
 
 The file may sit at any path in the repository — `org/profiles:env.yml` and
-`org/profiles:units/PM3.yml` both work. Note this is the **opposite** of `bake`, which takes a
+`org/profiles:units/unit-1.yml` both work. Note this is the **opposite** of `bake`, which takes a
 repository and requires `baker.yml` at the top level.
 
 Opunit's output streams through directly and its exit code is propagated, so
 `baker bake && baker check` works in CI.
 
-### Profiles live on `master`, and refs are refused
+Requires **opunit 0.9.4 or newer**, which is what `baker bake` installs for a `tools: opunit`
+entry. Older versions do not accept the profile path Baker passes them.
 
-opunit resolves a profile as `raw.githubusercontent.com/<owner>/<repo>/master/<file>` — **the
-branch is hardcoded** (opunit 0.9.4, `lib/profile.js`). Baker cannot change that, so it refuses a
-ref rather than passing one through to build an unresolvable URL:
+### Baker fetches the profile, pinned to a commit
+
+Baker resolves the address to a commit before fetching it: one `git ls-remote` finds the sha, and
+the profile is downloaded from a URL naming that sha. Two things follow.
+
+**A pushed profile takes effect immediately.** There is no CDN staleness window — a URL naming an
+immutable commit cannot return the wrong content however it is cached. Push a corrected profile and
+the next `baker check` anywhere in the cohort runs it.
+
+**Every run says what it checked against**, so pasted terminal output identifies its own profile:
 
 ```
-$ baker check org/profiles@PM3:env.yml
-==> org/profiles@PM3:env.yml names a ref, which opunit profiles do not support.
-    opunit reads a profile from the master branch of the repository.
-    Try: baker check org/profiles:env.yml
+$ baker check org/profiles:env.yml
+==> Using profile org/profiles:env.yml @ a1b2c3d (main)
 ```
 
-So where assignments can vary by branch on the template repo — `baker bake your-org/configs@PM3` —
-profiles cannot. Keep one profile file per unit on `master`.
+The branch is **discovered, not assumed** — a repository whose only branch is `main` works exactly
+like one with `master`. Fetched profiles are cached under `~/.baker/cache/profiles/` by commit, so
+re-running while you fix your environment re-downloads nothing.
+
+### Selecting a profile by branch or tag
+
+An assignment's checks can be pinned the same way its config is:
+
+```
+baker bake  your-org/configs@unit-1
+baker check your-org/profiles@unit-1:env.yml
+```
+
+An annotated tag resolves to the commit it points at. A ref that does not exist is named:
+
+```
+$ baker check org/profiles@unit-9:env.yml
+==> https://github.com/org/profiles.git has no branch or tag "unit-9".
+```
+
+### A failed lookup is a failure, not a fallback
+
+If the repository cannot be read — no network, a typo, a private repo — `baker check` stops and
+opunit is never started. It does **not** fall back to a previously cached profile: a passing check
+has to mean *the current* profile passed. Local mode (`baker check` with no argument) still works
+offline.
+
+A private or mistyped repository fails immediately rather than prompting for credentials, so a
+terminal never hangs on an invisible password prompt.
 
 ### A target that cannot be run is an error
 
@@ -125,7 +159,8 @@ refused, and opunit is not spawned:
 ```
 $ baker check your-org/configs
 ==> your-org/configs is not an opunit profile address.
-    `check` takes <owner>/<repo>:<file>.yml — a file on the repository's master branch, at any path.
+    `check` takes <owner>/<repo>[@<ref>]:<file>.yml — a .yml file at any path in a GitHub
+    repository, on the default branch or on the named branch or tag.
     Omit the argument to run ./test/opunit.yml against this machine.
 ```
 

@@ -149,9 +149,13 @@ See [Configuration sources](configuration-sources.md) for the full resolution or
 environment came out correctly:
 
 ```bash
-baker check                        # runs test/opunit.yml against this machine
-baker check user/repo:profile.yml  # runs a GitHub-hosted opunit profile
+baker check                              # runs test/opunit.yml against this machine
+baker check owner/repo:profile.yml       # runs a profile from the repository's default branch
+baker check owner/repo@unit-1:profile.yml  # runs a profile from the branch or tag unit-1
 ```
+
+Each run prints the commit its checks came from, and a profile that was just pushed takes effect
+straight away.
 
 Opunit's exit code propagates, so `baker bake && baker check` works in CI.
 

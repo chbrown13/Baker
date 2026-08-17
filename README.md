@@ -165,8 +165,12 @@ Local paths always win over GitHub shorthand, so a real `./owner/repo` directory
 `baker check` verifies that an environment ended up configured correctly by delegating to [opunit](https://github.com/ottomatica/opunit).
 
 ``` bash
-baker check                             # opunit verify local — runs test/opunit.yml on this machine
-baker check user/repo:profile.yml       # opunit profile — runs a GitHub-hosted opunit profile
+baker check                              # runs test/opunit.yml on this machine
+baker check owner/repo:profile.yml       # runs a profile from the repository's default branch
+baker check owner/repo@unit-1:profile.yml  # runs a profile from the branch or tag unit-1
 ```
 
-Requires opunit installed globally: `npm install -g ottomatica/opunit`.
+Baker pins the profile to a commit before fetching it, so a profile you just pushed takes effect
+immediately, and each run prints the commit it checked against.
+
+Requires opunit 0.9.4 or newer, installed globally: `npm install -g ottomatica/opunit`.

@@ -201,6 +201,23 @@ describe('Git cache addressing', function() {
             expect(fs.readFileSync(path.join(dest, 'baker.yml'), 'utf8')).to.equal('name: other\n');
         });
 
+        it('updates a clone whose HEAD is detached at a tag', async function() {
+            // A --branch clone of a TAG leaves HEAD detached, so `@{u}` does not
+            // exist and rev-parse fails. The update path has to fall back to
+            // discarding local changes against HEAD rather than propagating that
+            // failure — a re-bake of a tag-pinned config depends on it.
+            const origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: tagged\n');
+            const { execFileSync } = require('child_process');
+            execFileSync('git', ['tag', 'v1'], { cwd: origin, stdio: 'pipe' });
+
+            const dest = path.join(work, 'cache', 'repo');
+            await Git.cloneOrUpdate(`file://${origin}`, dest, 'v1');
+            // Second call takes the update branch against the detached clone.
+            await Git.cloneOrUpdate(`file://${origin}`, dest, 'v1');
+
+            expect(fs.readFileSync(path.join(dest, 'baker.yml'), 'utf8')).to.equal('name: tagged\n');
+        });
+
         it('rejects when the clone itself fails', async function() {
             const dest = path.join(work, 'cache', 'nope');
             let err;
@@ -250,5 +267,483 @@ describe('Git cache addressing', function() {
             expect(second).to.equal(first);
             expect(fs.readdirSync(cwdSandbox)).to.deep.equal([]);
         });
+    });
+});
+
+// `baker check` resolves a profile address to a commit sha before fetching it, so
+// that a sha-pinned raw URL cannot serve a stale profile. These cover the two
+// pieces that live on Git; the fetch-and-cache half is in test-check-command.js.
+// Added by Claude Code (claude-opus-5[1m])
+describe('Git.parseLsRemote (pure)', function() {
+    // Shape of real `git ls-remote --symref <url>` output, tab-separated.
+    const SYMREF = [
+        'ref: refs/heads/main\tHEAD',
+        '1111111111111111111111111111111111111111\tHEAD',
+        '1111111111111111111111111111111111111111\trefs/heads/main',
+        '2222222222222222222222222222222222222222\trefs/heads/PM3',
+        '3333333333333333333333333333333333333333\trefs/tags/v1',
+        ''
+    ].join('\n');
+
+    it('reads the default branch from the symref line, not from a sha', function() {
+        expect(Git.parseLsRemote(SYMREF).head).to.equal('refs/heads/main');
+    });
+
+    it('maps every ref name to its sha', function() {
+        const { refs } = Git.parseLsRemote(SYMREF);
+        expect(refs.get('HEAD')).to.equal('1111111111111111111111111111111111111111');
+        expect(refs.get('refs/heads/PM3')).to.equal('2222222222222222222222222222222222222222');
+        expect(refs.get('refs/tags/v1')).to.equal('3333333333333333333333333333333333333333');
+    });
+
+    it('keeps a peeled annotated tag as its own entry', function() {
+        const { refs } = Git.parseLsRemote(
+            '4444444444444444444444444444444444444444\trefs/tags/PM3\n' +
+            '5555555555555555555555555555555555555555\trefs/tags/PM3^{}\n'
+        );
+        expect(refs.get('refs/tags/PM3')).to.equal('4444444444444444444444444444444444444444');
+        expect(refs.get('refs/tags/PM3^{}')).to.equal('5555555555555555555555555555555555555555');
+    });
+
+    it('returns an empty map and no head for empty output', function() {
+        const { refs, head } = Git.parseLsRemote('');
+        expect(refs.size).to.equal(0);
+        expect(head).to.equal(null);
+    });
+
+    it('ignores lines that are not a sha/ref pair', function() {
+        const { refs } = Git.parseLsRemote('warning: redirecting to https://example.com/\nnot a ref line\n');
+        expect(refs.size).to.equal(0);
+    });
+
+    it('ignores a short or non-hex object id', function() {
+        const { refs } = Git.parseLsRemote('abc123\trefs/heads/main\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\trefs/heads/x\n');
+        expect(refs.size).to.equal(0);
+    });
+
+    it('parses CRLF output, which is what a Windows pipe delivers', function() {
+        // The regression this guards: a trailing \r stops `$` from matching, so
+        // every ref parsed away and a healthy repo reported as empty — on
+        // Windows only, where the cross-platform matrix runs.
+        const { refs, head } = Git.parseLsRemote(SYMREF.replace(/\n/g, '\r\n'));
+        expect(head).to.equal('refs/heads/main');
+        expect(refs.get('refs/heads/PM3')).to.equal('2222222222222222222222222222222222222222');
+    });
+
+    it('accepts a non-string argument without throwing', function() {
+        expect(Git.parseLsRemote(undefined).refs.size).to.equal(0);
+        expect(Git.parseLsRemote(null).head).to.equal(null);
+    });
+
+    it('touches neither the network nor the filesystem', function() {
+        // Guard against the parser growing an fs/https dependency later: it is
+        // called here with HOME pointed nowhere and must still work.
+        const origHome = process.env.HOME;
+        process.env.HOME = path.join(os.tmpdir(), 'baker-does-not-exist');
+        try {
+            expect(Git.parseLsRemote(SYMREF).refs.size).to.equal(4);
+        } finally {
+            if (origHome === undefined) delete process.env.HOME;
+            else process.env.HOME = origHome;
+        }
+    });
+});
+
+describe('Git.resolveRef', function() {
+    // The injected `raw` is the same seam as platform.detect()'s exec argument:
+    // the test passes a fake and mutates no shared object, so it cannot leak into
+    // another suite the way a global replacement would.
+    function fakeRaw(output, calls) {
+        return async function(cwd, args, env) {
+            if (calls) calls.push({ cwd, args, env });
+            return output;
+        };
+    }
+
+    const LINES = [
+        'ref: refs/heads/main\tHEAD',
+        '1111111111111111111111111111111111111111\tHEAD',
+        '1111111111111111111111111111111111111111\trefs/heads/main',
+        '2222222222222222222222222222222222222222\trefs/heads/PM3',
+        '3333333333333333333333333333333333333333\trefs/tags/lightweight',
+        '4444444444444444444444444444444444444444\trefs/tags/annotated',
+        '5555555555555555555555555555555555555555\trefs/tags/annotated^{}',
+        ''
+    ].join('\n');
+
+    it('resolves HEAD and reports the real default branch when no ref is given', async function() {
+        const r = await Git.resolveRef('https://github.com/o/r.git', null, fakeRaw(LINES));
+        expect(r.sha).to.equal('1111111111111111111111111111111111111111');
+        expect(r.ref).to.equal('main');
+    });
+
+    it('never assumes master — a main-only repo resolves and master appears nowhere', async function() {
+        const calls = [];
+        const mainOnly = [
+            'ref: refs/heads/main\tHEAD',
+            '1111111111111111111111111111111111111111\tHEAD',
+            '1111111111111111111111111111111111111111\trefs/heads/main',
+            ''
+        ].join('\n');
+        const r = await Git.resolveRef('https://github.com/o/r.git', undefined, fakeRaw(mainOnly, calls));
+        expect(r.ref).to.equal('main');
+        expect(JSON.stringify(calls)).to.not.contain('master');
+    });
+
+    it('resolves a branch ref to refs/heads/<ref>', async function() {
+        const r = await Git.resolveRef('https://github.com/o/r.git', 'PM3', fakeRaw(LINES));
+        expect(r).to.deep.equal({ sha: '2222222222222222222222222222222222222222', ref: 'PM3' });
+    });
+
+    it('resolves a lightweight tag', async function() {
+        const r = await Git.resolveRef('https://github.com/o/r.git', 'lightweight', fakeRaw(LINES));
+        expect(r.sha).to.equal('3333333333333333333333333333333333333333');
+    });
+
+    it('prefers the peeled sha for an annotated tag, not the tag object', async function() {
+        // The bare refs/tags/annotated entry is the tag object's sha, which
+        // raw.githubusercontent cannot serve — preferring it would 404.
+        const r = await Git.resolveRef('https://github.com/o/r.git', 'annotated', fakeRaw(LINES));
+        expect(r.sha).to.equal('5555555555555555555555555555555555555555');
+    });
+
+    it('accepts a literal 40-hex sha that is not an advertised ref', async function() {
+        const sha = '6666666666666666666666666666666666666666';
+        const r = await Git.resolveRef('https://github.com/o/r.git', sha, fakeRaw(LINES));
+        expect(r).to.deep.equal({ sha, ref: sha });
+    });
+
+    it('prefers a branch over a literal-looking sha when both could match', async function() {
+        // A 40-hex branch name is legal. The advertised ref wins over the
+        // "it looks like a sha" fallback, which is only reached when nothing
+        // in the repository matches.
+        const hex = 'a'.repeat(40);
+        const out = `7777777777777777777777777777777777777777\trefs/heads/${hex}\n`;
+        const r = await Git.resolveRef('https://github.com/o/r.git', hex, fakeRaw(out));
+        expect(r.sha).to.equal('7777777777777777777777777777777777777777');
+    });
+
+    it('names the ref and the repository when the ref does not exist', async function() {
+        let err;
+        try {
+            await Git.resolveRef('https://github.com/o/r.git', 'PM9', fakeRaw(LINES));
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('PM9');
+        expect(err.message).to.contain('https://github.com/o/r.git');
+    });
+
+    it('reports an empty repository rather than failing later on a 404', async function() {
+        let err;
+        try {
+            await Git.resolveRef('https://github.com/o/r.git', null, fakeRaw(''));
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('empty repository');
+        expect(err.message).to.contain('https://github.com/o/r.git');
+    });
+
+    it('falls back to HEAD as the ref name when no symref line is present', async function() {
+        // `--symref` is unsupported by very old servers; the sha line still is.
+        const r = await Git.resolveRef('https://github.com/o/r.git', null,
+            fakeRaw('1111111111111111111111111111111111111111\tHEAD\n'));
+        expect(r.ref).to.equal('HEAD');
+    });
+
+    it('passes GIT_TERMINAL_PROMPT=0 so a private repo fails instead of prompting', async function() {
+        const calls = [];
+        await Git.resolveRef('https://github.com/o/r.git', null, fakeRaw(LINES, calls));
+        expect(calls[0].env).to.have.property('GIT_TERMINAL_PROMPT', '0');
+    });
+
+    it('runs ls-remote --symref against the clone url from a cwd that exists', async function() {
+        const calls = [];
+        await Git.resolveRef('https://github.com/o/r.git', null, fakeRaw(LINES, calls));
+        expect(calls).to.have.lengthOf(1);
+        expect(calls[0].args).to.deep.equal(['ls-remote', '--symref', 'https://github.com/o/r.git']);
+        expect(fs.existsSync(calls[0].cwd)).to.equal(true);
+    });
+
+    it('propagates git\'s own error so a typo reads differently from a dead network', async function() {
+        const failing = async () => { throw new Error('fatal: repository not found'); };
+        let err;
+        try {
+            await Git.resolveRef('https://github.com/o/typo.git', null, failing);
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('repository not found');
+    });
+
+    it('names the repository when the lookup itself fails', async function() {
+        const failing = async () => { throw new Error('fatal: could not resolve host: github.com'); };
+        let err;
+        try {
+            await Git.resolveRef('https://github.com/o/r.git', null, failing);
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('https://github.com/o/r.git');
+        expect(err.message).to.contain('could not resolve host');
+    });
+
+    it('says plainly that a repo could not be read, since git\'s prompt wording does not', async function() {
+        // Raw git says "could not read Username for 'https://github.com':
+        // terminal prompts disabled", which reads like a Baker bug rather than
+        // a private or mistyped repository.
+        const failing = async () => {
+            throw new Error(`fatal: could not read Username for 'https://github.com': terminal prompts disabled`);
+        };
+        let msg = '';
+        try {
+            await Git.resolveRef('https://github.com/o/private.git', null, failing);
+        } catch (e) { msg = e.message; }
+        expect(msg).to.contain('Could not read https://github.com/o/private.git');
+        expect(msg).to.contain('public');
+    });
+});
+
+describe('Git.fetchUrl response handling', function() {
+    // A response whose body is never read keeps its socket active and the process
+    // never exits. Driven through the injected getter so no TLS server is needed.
+    function fakeResponse(statusCode, extra = {}) {
+        const res = new (require('events').EventEmitter)();
+        res.statusCode = statusCode;
+        res.headers = extra.headers || {};
+        res.destroyed = false;
+        res.destroy = function() { res.destroyed = true; };
+        res.setEncoding = function() {};
+        return res;
+    }
+
+    function fakeGet(responses, urls) {
+        return function(uri, opts, cb) {
+            if (urls) urls.push(uri);
+            const res = responses.shift();
+            process.nextTick(() => {
+                cb(res);
+                if (res.statusCode === 200) {
+                    process.nextTick(() => { res.emit('data', 'ok'); res.emit('end'); });
+                }
+            });
+            return new (require('events').EventEmitter)();
+        };
+    }
+
+    it('destroys the response on a non-200 so the process can exit', async function() {
+        // The regression this guards: `baker check owner/repo:typo.yml` rejected
+        // in ~130ms and then hung the terminal forever on an unread 404 body.
+        const res = fakeResponse(404);
+        let err;
+        try {
+            await Git.fetchUrl('https://example.com/x.yml', {}, fakeGet([res]));
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('HTTP 404');
+        expect(res.destroyed, 'an unread body keeps the socket alive').to.equal(true);
+    });
+
+    it('destroys the response before following a redirect', async function() {
+        const first = fakeResponse(302, { headers: { location: 'https://example.com/moved.yml' } });
+        const second = fakeResponse(200);
+        const urls = [];
+        const body = await Git.fetchUrl('https://example.com/x.yml', {}, fakeGet([first, second], urls));
+        expect(body).to.equal('ok');
+        expect(first.destroyed).to.equal(true);
+        expect(urls).to.deep.equal(['https://example.com/x.yml', 'https://example.com/moved.yml']);
+    });
+
+    it('carries the injected getter through a redirect', async function() {
+        // Without this the redirect would fall back to the real https.get and a
+        // test would quietly reach the network.
+        const first = fakeResponse(301, { headers: { location: 'https://example.com/moved.yml' } });
+        const second = fakeResponse(200);
+        const urls = [];
+        await Git.fetchUrl('https://example.com/x.yml', {}, fakeGet([first, second], urls));
+        expect(urls).to.have.lengthOf(2);
+    });
+
+    it('returns the body on a 200', async function() {
+        expect(await Git.fetchUrl('https://example.com/x.yml', {}, fakeGet([fakeResponse(200)])))
+            .to.equal('ok');
+    });
+
+    it('rejects when the response errors mid-body', async function() {
+        const res = fakeResponse(200);
+        const get = function(uri, opts, cb) {
+            process.nextTick(() => {
+                cb(res);
+                process.nextTick(() => res.emit('error', new Error('socket hang up')));
+            });
+            return new (require('events').EventEmitter)();
+        };
+        let err;
+        try {
+            await Git.fetchUrl('https://example.com/x.yml', {}, get);
+        } catch (e) { err = e; }
+        expect(err.message).to.equal('socket hang up');
+    });
+
+    it('rejects when the request itself errors', async function() {
+        const get = function() {
+            const req = new (require('events').EventEmitter)();
+            process.nextTick(() => req.emit('error', new Error('getaddrinfo ENOTFOUND')));
+            return req;
+        };
+        let err;
+        try {
+            await Git.fetchUrl('https://example.com/x.yml', {}, get);
+        } catch (e) { err = e; }
+        expect(err.message).to.contain('ENOTFOUND');
+    });
+
+    it('defaults to https.get when no getter is injected', function() {
+        expect(Git.fetchUrl.length).to.equal(1); // uri; headers and get are defaulted
+    });
+
+    it('parses JSON through fetchJson', async function() {
+        const res = fakeResponse(200);
+        const get = function(uri, opts, cb) {
+            process.nextTick(() => {
+                cb(res);
+                process.nextTick(() => { res.emit('data', '{"files":{}}'); res.emit('end'); });
+            });
+            return new (require('events').EventEmitter)();
+        };
+        expect(await Git.fetchJson('https://example.com/g', {}, get)).to.deep.equal({ files: {} });
+    });
+
+    it('names the url when a JSON response does not parse', async function() {
+        const res = fakeResponse(200);
+        const get = function(uri, opts, cb) {
+            process.nextTick(() => {
+                cb(res);
+                process.nextTick(() => { res.emit('data', '<html>rate limited</html>'); res.emit('end'); });
+            });
+            return new (require('events').EventEmitter)();
+        };
+        let msg = '';
+        try { await Git.fetchJson('https://api.github.com/gists/abc', {}, get); }
+        catch (e) { msg = e.message; }
+        expect(msg).to.contain('Failed to parse JSON from https://api.github.com/gists/abc');
+    });
+});
+
+describe('Git.fetchBakerFile', function() {
+    const home = withTempHome();
+
+    function jsonGet(body) {
+        return function(uri, opts, cb) {
+            const res = new (require('events').EventEmitter)();
+            res.statusCode = 200;
+            res.headers = {};
+            res.destroy = function() {};
+            res.setEncoding = function() {};
+            process.nextTick(() => {
+                cb(res);
+                process.nextTick(() => { res.emit('data', body); res.emit('end'); });
+            });
+            return new (require('events').EventEmitter)();
+        };
+    }
+
+    it('writes a gist\'s baker.yml into the cache', async function() {
+        const gist = JSON.stringify({ files: { 'baker.yml': { content: 'name: from-gist\n' } } });
+        const dir = await Git.fetchBakerFile('https://gist.github.com/user/abc123', jsonGet(gist));
+        expect(dir.startsWith(path.join(home(), '.baker', 'cache'))).to.equal(true);
+        expect(fs.readFileSync(path.join(dir, 'baker.yml'), 'utf8')).to.equal('name: from-gist\n');
+    });
+
+    it('accepts a gist naming the file baker.yaml', async function() {
+        const gist = JSON.stringify({ files: { 'baker.yaml': { content: 'name: yaml\n' } } });
+        const dir = await Git.fetchBakerFile('https://gist.github.com/user/abc123', jsonGet(gist));
+        expect(fs.readFileSync(path.join(dir, 'baker.yml'), 'utf8')).to.equal('name: yaml\n');
+    });
+
+    it('refuses an empty gist', async function() {
+        let msg = '';
+        try { await Git.fetchBakerFile('https://gist.github.com/user/abc123', jsonGet('{"files":{}}')); }
+        catch (e) { msg = e.message; }
+        expect(msg).to.contain('No files found in gist');
+    });
+
+    it('refuses a gist with no baker.yml, listing what it did find', async function() {
+        // No first-file fallback: silently taking whatever came first is the
+        // invisible substitution the baker.yml rule exists to prevent.
+        const gist = JSON.stringify({ files: { 'other.yml': { content: 'x' } } });
+        let msg = '';
+        try { await Git.fetchBakerFile('https://gist.github.com/user/abc123', jsonGet(gist)); }
+        catch (e) { msg = e.message; }
+        expect(msg).to.contain('No baker.yml in gist');
+        expect(msg).to.contain('other.yml');
+    });
+
+    it('fetches a raw baker.yml url as-is', async function() {
+        const dir = await Git.fetchBakerFile(
+            'https://raw.githubusercontent.com/o/r/main/baker.yml', jsonGet('name: raw\n'));
+        expect(fs.readFileSync(path.join(dir, 'baker.yml'), 'utf8')).to.equal('name: raw\n');
+    });
+});
+
+describe('Git.requireBakerFileName', function() {
+    it('accepts baker.yml and baker.yaml', function() {
+        expect(() => Git.requireBakerFileName('https://example.com/a/baker.yml')).to.not.throw();
+        expect(() => Git.requireBakerFileName('https://example.com/a/BAKER.YAML')).to.not.throw();
+    });
+
+    it('names the file it found when the name is wrong', function() {
+        expect(() => Git.requireBakerFileName('https://example.com/a/config.yml'))
+            .to.throw(/found "config.yml"/);
+    });
+
+    it('lets an unparseable URL through, leaving the fetch to fail', function() {
+        // Deliberate: the name cannot be checked, so the error should come from
+        // the fetch rather than from a guess about the string.
+        expect(() => Git.requireBakerFileName('not a url at all')).to.not.throw();
+    });
+});
+
+describe('Git.raw env argument', function() {
+    let work;
+
+    beforeEach(function() {
+        work = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-git-env-'));
+    });
+
+    afterEach(function() {
+        fs.rmSync(work, { recursive: true, force: true });
+    });
+
+    it('merges over process.env rather than replacing it', async function() {
+        // The regression this guards: simple-git hands _env straight to spawn,
+        // whose `env` option REPLACES the environment — so passing the one
+        // variable alone drops everything else, including HOME (no ~/.gitconfig,
+        // no credential helper) and SSH_AUTH_SOCK.
+        //
+        // Asserted through a variable git itself reports back, so the test fails
+        // if the merge is removed. Checking that git merely *runs* would not:
+        // execvp falls back to a default PATH, so `git` is still found with the
+        // environment stripped and the bug would pass unnoticed.
+        const orig = process.env.GIT_AUTHOR_NAME;
+        process.env.GIT_AUTHOR_NAME = 'Baker Env Probe';
+        try {
+            const out = await Git.raw(os.tmpdir(), ['var', 'GIT_AUTHOR_IDENT'],
+                                      { GIT_TERMINAL_PROMPT: '0' });
+            expect(out).to.contain('Baker Env Probe');
+        } finally {
+            if (orig === undefined) delete process.env.GIT_AUTHOR_NAME;
+            else process.env.GIT_AUTHOR_NAME = orig;
+        }
+    });
+
+    it('still applies the variable it was given', async function() {
+        const out = await Git.raw(os.tmpdir(), ['var', 'GIT_EDITOR'], { GIT_EDITOR: 'baker-probe-editor' });
+        expect(out.trim()).to.equal('baker-probe-editor');
+    });
+
+    it('resolves a real repository end to end through resolveRef', async function() {
+        const origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: env\n');
+        const r = await Git.resolveRef(`file://${origin}`);
+        expect(r.ref).to.equal('main');
+        expect(r.sha).to.match(/^[0-9a-f]{40}$/);
+    });
+
+    it('leaves existing callers unchanged when no env is passed', async function() {
+        const origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: env\n');
+        const out = await Git.raw(os.tmpdir(), ['ls-remote', `file://${origin}`]);
+        expect(out).to.contain('refs/heads/main');
     });
 });
