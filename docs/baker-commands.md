@@ -14,10 +14,10 @@ Baker ships seven commands:
 | [`cleanup`](#baker-cleanup) | Undo what a bake placed | |
 | [`delete` / `destroy`](#baker-delete--baker-destroy) | Tear down the environment | |
 | [`ssh`](#baker-ssh) | Get a shell in the environment | |
-| [`init`](#baker-init) | Write a starter `baker.yml` | **broken** |
+| [`init`](#baker-init) | Write a starter `baker.yml` | |
 | [`run`](#baker-run) | Run a named command from `commands:` | **broken outside `docker:`** |
 
-The two marked broken are documented below with their exact failure, rather than omitted.
+The one marked broken is documented below with its exact failure, rather than omitted.
 
 ---
 
@@ -286,20 +286,54 @@ Write a starter `baker.yml` in the current directory, interactively.
 baker init
 ```
 
-It refuses to overwrite an existing `baker.yml`, then prompts for a name, memory, an IP, port
-forwards, and checkbox lists of languages, services, and tools.
+`init` is an **authoring tool**. You run it once in the repository you are preparing, commit the
+result, and the people you hand the repository to run `baker bake`. That is why it warns about
+choices that work on your machine but not on theirs.
 
-> **This command is currently broken.** The template it renders emits a `vm:` key, and `vm:` was
-> retired with the VirtualBox provider — so `baker bake` rejects the file `baker init` just wrote:
->
-> ```
-> $ baker init
-> $ baker bake
-> ==> Error: 'vm:' is no longer supported.
-> ```
->
-> The memory and IP prompts are also meaningless for the three current providers. Write your
-> `baker.yml` by hand from the [reference](baker-yml-reference.md) until this is rebuilt.
+It refuses to overwrite an existing `baker.yml`, then asks for:
+
+| Prompt | Notes |
+|--------|-------|
+| Environment name | Defaults to the directory name |
+| Where will this run? | `local:` (default), `docker:`, or `remote:` — each option states what it means for a group |
+| Tools | Generated from the available bakelets, with anything already detected pre-checked |
+| System packages | Comma separated, optional |
+| Materials directory | Optional; becomes a `config: - files:` block |
+
+### It reads the repository first
+
+`init` looks for a few exact files and pre-checks the matching tool:
+
+| Found | Proposes |
+|-------|----------|
+| `pom.xml` | `tools: maven` |
+| `package.json` | `tools: node` |
+| `CLAUDE.md` or `.claude/` | `tools: claude-code` |
+
+It proposes `tools:` entries rather than `lang:` ones deliberately — every `lang:` and `services:`
+bakelet needs Ansible and sudo on a Linux target, so proposing one would produce a config that
+fails for anyone on Windows or macOS. Detection only pre-checks boxes; you still decide.
+
+### It warns before you ship a config that cannot work
+
+Two checks happen before anything is written, and declining either one writes nothing:
+
+- **A tool that needs Ansible and sudo** (`jekyll`, `dazed`, `defects4j`) selected against a
+  `local:` or `docker:` target — these fail for anyone not on Linux. Under `remote:` there is no
+  warning, since you control that host's OS.
+- **A Debian-only package spelling** such as `build-essential` or `python3-dev`. `init` shows what
+  the name is on other managers and points at the portable `tools:` entry where one exists.
+
+```
+$ baker init
+==> Detected: Maven project
+==> 'build-essential' is a Debian/Ubuntu spelling. Elsewhere: dnf: gcc-c++ make, pacman: base-devel.
+    Consider tools: - cpp instead — Baker maps it per manager.
+? Keep 'build-essential' anyway? (y/N)
+```
+
+The generated file opens with a comment saying it came from `init`, and contains only the sections
+you answered for — see the [`baker.yml` reference](baker-yml-reference.md) for everything else.
 
 ---
 

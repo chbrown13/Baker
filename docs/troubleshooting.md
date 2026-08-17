@@ -28,18 +28,6 @@ prefix from the target's user id rather than hardcoding it.
 `packages:`, `resources:`, and `start:` run as plain commands. If a config sticks to those, sudo
 never enters the picture beyond whatever an individual package manager asks for.
 
-### `baker init` writes a config `baker bake` rejects
-
-`baker init` renders a template that still emits a `vm:` key, retired with the VirtualBox provider:
-
-```
-$ baker init
-$ baker bake
-==> Error: 'vm:' is no longer supported.
-```
-
-**Workaround:** write `baker.yml` by hand from the [reference](baker-yml-reference.md).
-
 ### `baker run` says the environment is not baked
 
 ```
@@ -174,9 +162,9 @@ The `remote:` block is missing `ip`, `user`, or `private_key`. All three are req
 
 ### `Can't find baker.yml in current directory`
 
-`baker bake` with no argument requires `./baker.yml`. Pass a source explicitly, or write the file
-by hand — see the [reference](baker-yml-reference.md). (`baker init` exists but currently produces
-a config `bake` rejects.)
+`baker bake` with no argument requires `./baker.yml`. Pass a source explicitly, run
+[`baker init`](baker-commands.md#baker-init) to write one, or write it by hand from the
+[reference](baker-yml-reference.md).
 
 ### `opunit not found on PATH`
 

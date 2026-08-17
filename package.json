@@ -40,7 +40,6 @@
     "mustache": "^4.0.0",
     "node-powershell": "^4.0.0",
     "ora": "^4.0.3",
-    "ping": "^0.2.2",
     "scp2": "^0.5.0",
     "simple-git": "^1.131.0",
     "slash": "^3.0.0",

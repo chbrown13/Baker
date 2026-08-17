@@ -24,8 +24,9 @@ tools:
   - maven
 ```
 
-Write this by hand. (`baker init` exists, but it currently produces a config `baker bake` rejects —
-see [Troubleshooting](troubleshooting.md#baker-init-writes-a-config-baker-bake-rejects).)
+`baker init` writes a starter file like this for you — it reads the repository, pre-checks the
+tools it recognises, and warns about anything that would fail on someone else's machine. Run it in
+the directory you want to configure, or write the file by hand.
 
 What each key does:
 
