@@ -1,5 +1,13 @@
 # Proves Baker provisions on every platform it claims to support.
 #
+# **The unit suite runs on ubuntu only, and gates nothing.** It used to run on all
+# seven targets ahead of the bake, which meant a test that merely *assumed* a
+# platform — a hardcoded `/bin/sh`, a `\n` line ending, a non-root user — stopped
+# the bake-and-assert steps from running at all. Every job failed at `npm test`
+# and no platform coverage was ever demonstrated, which is the one thing this
+# workflow exists to produce. The suite is not platform-neutral; the bake is the
+# thing under test here, so the two are separated and neither blocks the other.
+#
 # The distro jobs run in containers driven by `docker run` rather than by the
 # `container:` key, because actions-in-containers needs a glibc Node and Alpine
 # does not have one. Checking out on the host and mounting the workspace keeps
@@ -13,7 +21,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Host runners: unit suite plus a real end-to-end bake.
+  # The unit suite, once, on the platform it is actually written against.
+  # Deliberately has no `needs:` relationship with the bake jobs in either
+  # direction: a red suite must not hide whether Baker still provisions.
+  unit:
+    name: unit suite (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Unit suite
+        run: npm test
+
+  # Host runners: a real end-to-end bake and its assertions.
   host:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -34,9 +61,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
-      - name: Unit suite
-        run: npm test
 
       - name: Bake the representative config
         working-directory: test/resources/cross-platform
@@ -71,6 +95,7 @@ jobs:
 
   # Distributions with no hosted runner. The container is the target, so this
   # also exercises the root/no-sudo path that docker-local provisioning uses.
+  # No unit suite here either — see the note at the top.
   distro:
     name: ${{ matrix.label }}
     runs-on: ubuntu-latest
@@ -90,13 +115,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unit suite and bake inside ${{ matrix.image }}
+      - name: Bake inside ${{ matrix.image }}
         run: |
           docker run --rm -v "$PWD":/work -w /work ${{ matrix.image }} sh -c '
             set -e
             ${{ matrix.prep }}
             npm install --no-audit --no-fund
-            npm test
             cd test/resources/cross-platform
             node ../../../baker.js bake
             jq --version
