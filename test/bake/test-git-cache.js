@@ -717,15 +717,22 @@ describe('Git.raw env argument', function() {
         // if the merge is removed. Checking that git merely *runs* would not:
         // execvp falls back to a default PATH, so `git` is still found with the
         // environment stripped and the bug would pass unnoticed.
-        const orig = process.env.GIT_AUTHOR_NAME;
+        // Both name AND email: `git var GIT_AUTHOR_IDENT` refuses to guess an
+        // address, and a CI runner has no global identity to fall back on — so
+        // setting only the name passes locally and fails on every runner.
+        const orig = { name: process.env.GIT_AUTHOR_NAME, email: process.env.GIT_AUTHOR_EMAIL };
         process.env.GIT_AUTHOR_NAME = 'Baker Env Probe';
+        process.env.GIT_AUTHOR_EMAIL = 'probe@example.com';
         try {
             const out = await Git.raw(os.tmpdir(), ['var', 'GIT_AUTHOR_IDENT'],
                                       { GIT_TERMINAL_PROMPT: '0' });
             expect(out).to.contain('Baker Env Probe');
         } finally {
-            if (orig === undefined) delete process.env.GIT_AUTHOR_NAME;
-            else process.env.GIT_AUTHOR_NAME = orig;
+            ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL'].forEach((k) => {
+                const was = k === 'GIT_AUTHOR_NAME' ? orig.name : orig.email;
+                if (was === undefined) delete process.env[k];
+                else process.env[k] = was;
+            });
         }
     });
 
