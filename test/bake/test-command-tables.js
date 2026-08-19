@@ -279,7 +279,7 @@ describe('cross-platform bakelet contract', function() {
         // silently fall back to checking nothing. Raise this as bakelets are
         // converted; a drop means tables disappeared.
         it(`covers the ${withTables.length} portable-tier bakelets that declare tables`, function() {
-            expect(withTables.length).to.equal(10,
+            expect(withTables.length).to.equal(11,
                 'Command table count changed — update this so the invariants above are known to run.');
         });
     });

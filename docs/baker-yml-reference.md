@@ -114,6 +114,7 @@ Array of bakelet names:
 | `baker` | `baker` | Baker itself — takes a required `source:` |
 | `docker-extension` | — | A Docker Desktop extension — takes a required `address:` |
 | `opencode` | `opencode` | OpenCode agentic CLI — see below |
+| `vscode` | `vscode` | Visual Studio Code, with optional extensions and settings — see below |
 
 **Language toolchains** (`cpp`, `python`, `node`) exist because those package names
 genuinely differ between managers — Debian's `build-essential` is `gcc-c++` on Fedora and
@@ -183,6 +184,44 @@ tools:
 |-------|------|-------------|
 | `install` | string | `curl` (default) or `npm` |
 | `repo` | string or object | Config repo to clone. `url:dest` string, or `{repo: <url>, dest: <path>}` |
+
+**Visual Studio Code** (`vscode`) installs the editor and, optionally, the extensions and the
+User `settings.json` an assignment expects everyone to have:
+
+```yaml
+tools:
+  - vscode                                     # editor only
+  - vscode: ms-python.python                   # shorthand, one extension
+  - vscode:
+      extensions:
+        - ms-python.python
+        - dbaeumer.vscode-eslint@2.4.4         # a version may be pinned
+      settings:
+        editor.formatOnSave: true
+        editor.tabSize: 4
+      overwrite: false                         # default
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extensions` | string or list | Marketplace ids in `publisher.extension` form, optionally `@version` |
+| `settings` | map | Written verbatim to User `settings.json` — use VS Code's own dotted keys |
+| `overwrite` | boolean | Replace an existing `settings.json`. Default `false` |
+
+Extensions install in a single `code --install-extension … --force` invocation, so re-baking
+is a no-op rather than an error.
+
+> **`settings:` does not overwrite by default.** Baker cannot merge into an existing
+> `settings.json` — no target is guaranteed to have `jq`, `node` or `python3` — so it writes
+> the file only when it is absent and reports that it left an existing one alone. Set
+> `overwrite: true` to replace it; the previous file is copied to `settings.json.baker-backup`
+> first. Settings land in the User profile, which is per-machine: for per-assignment settings
+> that travel with a repository, use `config: files:` to write `.vscode/settings.json` instead.
+
+> **Not available on Alpine.** Microsoft publishes no musl build and there is no community
+> package, so `apk` targets are refused with a message rather than given a wrong package. On
+> Arch the distribution package is **Code - OSS**, which uses the Open VSX registry rather than
+> Microsoft's marketplace — extension ids that resolve everywhere else may not resolve there.
 
 Installs are idempotent. A config `repo:` is cloned on first bake and `git pull --ff-only`'d
 afterward; if the destination exists but isn't a git repo, Baker skips it rather than overwriting.

@@ -84,9 +84,10 @@ tools:
 | `defects4j` | e.g. `defects4j2` | Defects4J bug database |
 | `claude-code` | — | Agentic coding CLI — see below |
 | `opencode` | — | Agentic coding CLI — see below |
+| `vscode` | — | Visual Studio Code, plus optional extensions and settings. See below |
 
-`jupyter`, `latex`, `maven`, `ansible`, `cpp`, `git`, `node`, `python`, `npm`, `pip`, and `opunit`
-are **exec-based**: one idempotent command per package manager, no Ansible and no playbook.
+`jupyter`, `latex`, `maven`, `ansible`, `cpp`, `git`, `node`, `python`, `npm`, `pip`, `opunit`, and
+`vscode` are **exec-based**: one idempotent command per package manager, no Ansible and no playbook.
 `jekyll`, `dazed`, and `defects4j` are still playbook-backed and need a Linux target.
 
 ### `cpp`, `python`, `pip`, `npm`
@@ -244,6 +245,64 @@ Defaults for `dest` are the tool's own config directory (`~/.claude` for `claude
 > **Authoring constraint:** install commands must contain no single quotes, because the
 > docker-local mode wraps them as `docker exec <c> /bin/bash -c '<cmd>'`. A single quote breaks the
 > wrapping.
+
+### `vscode`
+
+```yaml
+tools:
+  - vscode                                     # editor only
+  - vscode: ms-python.python                   # shorthand, one extension
+  - vscode:
+      extensions:
+        - ms-python.python
+        - dbaeumer.vscode-eslint@2.4.4         # a version may be pinned
+      settings:
+        editor.formatOnSave: true
+        editor.tabSize: 4
+      overwrite: false                         # default
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extensions` | string or list | Marketplace ids in `publisher.extension` form, optionally `@version` |
+| `settings` | map | Written verbatim to User `settings.json` — use VS Code's own dotted keys |
+| `overwrite` | boolean | Replace an existing `settings.json`. Default `false` |
+
+**Installation differs from every other tool here.** VS Code is not in the default repositories
+for apt, dnf or zypper, so those three download Microsoft's official package and install it
+locally rather than naming one for the manager to find. The `.deb` and `.rpm` register
+Microsoft's repository during their post-install, so the machine keeps receiving updates
+afterwards. The download picks x64 or arm64 from `uname -m` — `docker:` mode on an Apple Silicon
+laptop produces an arm64 Linux container, and a hardcoded x64 URL would break it.
+
+| | apt | dnf / zypper | pacman | apk | brew | choco |
+|---|---|---|---|---|---|---|
+| `vscode` | official `.deb` | official `.rpm` | `code` | *unsupported* | `visual-studio-code` cask | `vscode` |
+
+Extensions install in a single `code --install-extension … --force` invocation — one invocation
+because VS Code's several-second startup is paid per call, and `--force` because an
+already-installed extension otherwise exits non-zero and fails the second bake.
+
+> **`settings:` does not overwrite by default.** Baker cannot merge into an existing
+> `settings.json` — no target is guaranteed to have `jq`, `node` or `python3` — so it writes the
+> file only when it is absent and reports that it left an existing one alone. `overwrite: true`
+> replaces it, copying the previous file to `settings.json.baker-backup` first. The file is
+> written through a quoted heredoc (base64 on PowerShell), so nothing in the JSON is
+> re-interpreted by the target's shell.
+>
+> These are **User** settings, which are per-machine. For settings that travel with an
+> assignment repository, write `.vscode/settings.json` with [`config: files:`](#files--declarative-file-placement)
+> instead.
+
+> **Alpine is refused, and Arch is not the Microsoft build.** Microsoft publishes no musl build
+> and there is no community package, so `apk` targets get the "use docker: or remote:" refusal
+> rather than a guessed package name. Arch's `code` is **Code - OSS**, which ships the Open VSX
+> registry instead of Microsoft's marketplace — extension ids that resolve everywhere else may
+> not resolve there.
+
+`baker cleanup` offers the editor and the settings file as two separate entries, both defaulting
+to No. Extensions are never offered: nothing records which ones came from the bake, so removing
+them would take the person's own along with them.
 
 ---
 
