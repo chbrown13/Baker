@@ -164,9 +164,16 @@ directory holds a baker.yml — try owner/repo
 To run an opunit profile, use: baker check your-org/profiles:env.yml
 ```
 
-## The cache
+## The checkout and the cache
 
-Everything Baker clones or fetches goes under `~/.baker/cache/`, **never your working directory**:
+Baking a repository produces two copies of it, and the difference between them is the whole point.
+
+**The checkout** is yours. It lands where you can see it — `<local:>/<repo>`, or `./<repo>` when the
+config names no host directory — and Baker never forces anything onto it. A clean checkout is
+fast-forwarded on the next bake; one with uncommitted changes, untracked files, or unpushed commits
+is reported and left alone. Nothing you have not pushed is ever discarded.
+
+**The cache** is Baker's. Everything it clones or fetches also goes under `~/.baker/cache/`:
 
 ```
 ~/.baker/cache/<host>/<owner>/<repo>/   clones
@@ -175,10 +182,12 @@ Everything Baker clones or fetches goes under `~/.baker/cache/`, **never your wo
                                         opunit profiles for `baker check`
 ```
 
-This matters when you run Baker from inside a repository you care about — nothing is written
-there. Re-running the same address updates the cached clone rather than failing, and local
-modifications inside the cache are discarded on the next run, so a dirtied cache recovers by
-itself.
+The cache exists because of a chicken-and-egg problem: where the checkout belongs is written in the
+config, so Baker has to read the config before it can know. It clones to the cache, reads `local:`,
+and only then places your checkout. Re-running the same address updates the cached clone, and local
+modifications inside the cache are discarded on the next run — safe precisely because the cache is
+never the copy you work in. Single-file sources (gists, snippets, raw URLs) describe no repository
+to check out, so they are fetched to the cache only and write nothing to your working directory.
 
 The profile directory is **content-addressed**: the path names the commit, so a cached profile is
 the right bytes by construction and is never revalidated. `baker check` still runs one

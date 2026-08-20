@@ -152,7 +152,9 @@ describe('source resolver', function() {
                 process.chdir(tmpRoot); // ensure "ottomatica/baker-test" is not a real path
                 const resolved = await resolveSource('ottomatica/baker-test');
                 expect(cloned).to.equal('https://github.com/ottomatica/baker-test.git');
-                expect(resolved).to.equal(cloneDir);
+                // The checkout, not the cache: named after the repo, beside cwd.
+                expect(resolved).to.equal(path.join(tmpRoot, 'baker-test'));
+                expect(fs.existsSync(path.join(tmpRoot, 'baker-test', 'baker.yml'))).to.equal(true);
             } finally {
                 Git.clone = orig;
             }
@@ -234,7 +236,7 @@ describe('source resolver', function() {
                 const resolved = await resolveSource('your-org/configs@PM3');
                 expect(seen.url).to.equal('https://github.com/your-org/configs.git');
                 expect(seen.ref).to.equal('PM3');
-                expect(resolved).to.equal(cloneDir);
+                expect(resolved).to.equal(path.join(tmpRoot, 'configs'));
             } finally {
                 Git.clone = orig;
             }
@@ -284,7 +286,7 @@ describe('source resolver', function() {
             Git.clone = async () => cloneDir;
             try {
                 process.chdir(tmpRoot);
-                expect(await resolveSource('your-org/configs')).to.equal(cloneDir);
+                expect(await resolveSource('your-org/configs')).to.equal(path.join(tmpRoot, 'configs'));
             } finally {
                 Git.clone = orig;
             }
@@ -302,7 +304,13 @@ describe('source resolver', function() {
     // about, so no remote form may leave anything behind in cwd. Git.clone and
     // Git.fetchBakerFile are stubbed to write into the cache path they would
     // really use, so this exercises the resolver's own path handling.
-    describe('AC-4: no remote form writes to cwd', function() {
+    // A remote source now materializes a checkout the user can see and work in.
+    // Which forms do that is the point: only the CLONE forms, and only ever into
+    // one directory named after the repository. The single-file fetch forms
+    // (gist, raw .yml) still write nothing to cwd — there is no repository to
+    // check out — and a rejected address must not litter on its way to the error.
+    // Rewritten from 'AC-4: no remote form writes to cwd' by Claude Code (claude-opus-5[1m])
+    describe('a remote source checks out into cwd, and only there', function() {
         let tmpRoot, tmpHome, origCwd, origHome, origClone, origFetch;
 
         beforeEach(function() {
@@ -341,26 +349,42 @@ describe('source resolver', function() {
             fs.rmSync(tmpHome, { recursive: true, force: true });
         });
 
-        const forms = [
-            ['owner/repo shorthand',   'your-org/configs'],
-            ['owner/repo:subdir',      'your-org/configs:units/one'],
-            ['a raw .yml URL',         'https://raw.githubusercontent.com/o/r/main/baker.yml'],
-            ['a gist page URL',        'https://gist.github.com/username/1234567890abcdef'],
-            ['a GitHub tree URL',      'https://github.com/o/r/tree/master/sub'],
-            ['an scp-style remote',    'git@github.com:o/r.git'],
+        // [label, source, expected directory name]
+        const cloneForms = [
+            ['owner/repo shorthand',  'your-org/configs',                    'configs'],
+            ['a GitHub tree URL',     'https://github.com/o/r/tree/master/sub', 'r'],
+            ['an scp-style remote',   'git@github.com:o/r.git',              'r'],
         ];
 
-        forms.forEach(function([label, source]) {
+        cloneForms.forEach(function([label, source, dirName]) {
+            it(`checks out exactly one directory named after the repo for ${label}`, async function() {
+                await resolveSource(source);
+                expect(fs.readdirSync(tmpRoot)).to.deep.equal([dirName]);
+            });
+        });
+
+        const nonCloneForms = [
+            ['owner/repo:subdir',   'your-org/configs:units/one'],
+            ['a raw .yml URL',      'https://raw.githubusercontent.com/o/r/main/baker.yml'],
+            ['a gist page URL',     'https://gist.github.com/username/1234567890abcdef'],
+        ];
+
+        nonCloneForms.forEach(function([label, source]) {
             it(`leaves cwd untouched for ${label}`, async function() {
-                const before = fs.readdirSync(tmpRoot);
                 try {
                     await resolveSource(source);
                 } catch (err) {
                     // A resolution failure is fine here; littering is not.
                 }
-                expect(fs.readdirSync(tmpRoot)).to.deep.equal(before);
                 expect(fs.readdirSync(tmpRoot)).to.deep.equal([]);
             });
+        });
+
+        it('never unpacks a repository on top of what is already in cwd', async function() {
+            fs.writeFileSync(path.join(tmpRoot, 'homework.txt'), 'mine\n');
+            await resolveSource('your-org/configs');
+            expect(fs.readdirSync(tmpRoot).sort()).to.deep.equal(['configs', 'homework.txt']);
+            expect(fs.readFileSync(path.join(tmpRoot, 'homework.txt'), 'utf8')).to.equal('mine\n');
         });
     });
 });

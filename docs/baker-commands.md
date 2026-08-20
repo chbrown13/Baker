@@ -50,16 +50,37 @@ Three forms are rejected, each naming the fix:
 The file `bake` reads is always literally `baker.yml`. A differently-named local config is rejected
 with the `mv` that fixes it, rather than being renamed behind your back.
 
-An existing local path always wins over the `owner/repo` shorthand. Clones and fetches go to
-`~/.baker/cache/`, never your working directory, and re-baking updates an existing clone rather
-than failing. See [Configuration sources](configuration-sources.md).
+An existing local path always wins over the `owner/repo` shorthand.
+
+**Where a cloned repository lands.** Baking a repository checks it out somewhere you can see and
+work in, named after the repository, exactly as plain `git clone` would name it:
+
+| The config says | The checkout lands in |
+|-----------------|-----------------------|
+| `local: ./work` | `./work/<repo>` |
+| `local: {}`, `docker:`, `remote:` | `./<repo>` |
+
+`local:` names the environment root, so the checkout goes inside it; the other providers describe a
+container or a server and name no directory on your machine, so the checkout lands beside you. It is
+always a named sub-directory — Baker never unpacks a repository on top of files already sitting
+there, and refuses if the name is taken by something that is not a git repository.
+
+**Re-baking never forces.** If the checkout is clean it is fast-forwarded (`git pull --ff-only`). If
+it has uncommitted changes, untracked files, or commits the remote does not, Baker says so and
+leaves it exactly as it is — the rest of the bake still runs. Nothing you have not pushed is ever
+discarded.
+
+Baker also keeps a copy under `~/.baker/cache/`, which is what it reads a config from before it
+knows where the checkout belongs. Nothing there is precious; `rm -rf ~/.baker/cache` is always safe.
+Single-file sources (`--file`, gists, raw URLs) are fetched to that cache only and write nothing to
+your working directory. See [Configuration sources](configuration-sources.md).
 
 **Flags** — explicit overrides that bypass the positional resolver:
 
 | Flag | Alias | Description |
 |------|-------|-------------|
 | `--local` | `-l` | Path to a directory containing `baker.yml` |
-| `--repo` | `-r` | Git repo URL to clone; `baker.yml` must be in its root |
+| `--repo` | `-r` | Git repo URL to clone; `baker.yml` must be in its root. Same checkout rules as above |
 | `--file` | `-f` | URL to a single `baker.yml` — gist, GitLab snippet, or raw file |
 | `--verbose` | `-v` | Print full command and playbook output |
 
@@ -206,6 +227,7 @@ Defaults follow a risk gradient, and every one is overridable at the prompt:
 | `files:`, `config:`, `env:` | **remove** | Baker placed them, in a scope Baker owns |
 | `tools:` | **keep** | Baker cannot tell whether it installed a tool or found it already there |
 | cloned repositories | **keep** | May hold work of yours |
+| injected content (`extract:`) | **remove** | A manifest records every file placed and its hash, so removal is provable |
 
 ### Guards you cannot override
 
@@ -213,6 +235,11 @@ A cloned repository with uncommitted changes, untracked files, or unpushed commi
 not offered, not selectable, and unaffected by `--all`. So is a clone destination that exists but is
 not a git repository. Only a clean clone is removable, because only a clean clone is recoverable
 from its remote.
+
+Injected content (`resources: git:` with `extract:`) is guarded the same way, per file: one whose
+content no longer matches the hash recorded when it was placed has been edited since, and is kept
+and reported rather than removed. Files in that folder which Baker never placed are not in the
+manifest at all, so they are never candidates.
 
 ### Two limitations it states on every run
 

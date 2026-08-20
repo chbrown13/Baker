@@ -270,6 +270,156 @@ describe('Git cache addressing', function() {
     });
 });
 
+// The visible checkout: where a cloned repo lands and, more importantly, what
+// happens to it on a re-bake. The cache may be force-updated; this must not be.
+// Added by Claude Code (claude-opus-5[1m])
+describe('Git working copy', function() {
+
+    describe('Git.repoName (pure)', function() {
+        it('takes the last segment of an https URL, minus .git', function() {
+            expect(Git.repoName('https://github.com/ottomatica/baker-test.git')).to.equal('baker-test');
+        });
+
+        it('works without the .git suffix', function() {
+            expect(Git.repoName('https://github.com/ottomatica/baker-test')).to.equal('baker-test');
+        });
+
+        it('does not mistake the scp-style colon for a path separator', function() {
+            expect(Git.repoName('git@github.com:ottomatica/baker-test.git')).to.equal('baker-test');
+        });
+
+        it('takes the final segment of a nested GitLab group path', function() {
+            expect(Git.repoName('https://gitlab.com/group/sub/proj.git')).to.equal('proj');
+        });
+
+        it('handles a file:// URL, which is what the tests clone from', function() {
+            expect(Git.repoName('file:///tmp/whatever/origin')).to.equal('origin');
+        });
+
+        it('returns null rather than a guess for an unusable remote', function() {
+            expect(Git.repoName('')).to.equal(null);
+        });
+    });
+
+    describe('Git.pullIfClean', function() {
+        let work, origin, checkout;
+
+        const runIn = (dir, ...args) =>
+            require('child_process').execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+
+        beforeEach(function() {
+            work = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-wc-'));
+            origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: one\n');
+            checkout = path.join(work, 'checkout');
+            runIn(work, 'clone', '--quiet', `file://${origin}`, checkout);
+            runIn(checkout, 'config', 'user.email', 'test@example.com');
+            runIn(checkout, 'config', 'user.name', 'Baker Test');
+        });
+
+        afterEach(function() {
+            fs.rmSync(work, { recursive: true, force: true });
+        });
+
+        // Regression: simple-git 1.x resolves to null, not '', when a command
+        // prints nothing — and String(null) is "null", which is truthy. Reading
+        // `git status --porcelain` without guarding that made every clean
+        // checkout report as dirty, so Baker silently stopped updating anything
+        // and told people they had changes they did not have.
+        it('sees a clean checkout as clean, and fast-forwards it', async function() {
+            fs.writeFileSync(path.join(origin, 'NEW.md'), 'upstream\n');
+            runIn(origin, 'add', '-A');
+            runIn(origin, 'commit', '--quiet', '-m', 'second');
+
+            const result = await Git.pullIfClean(checkout);
+
+            expect(result.kind).to.equal('updated');
+            expect(fs.existsSync(path.join(checkout, 'NEW.md'))).to.equal(true);
+        });
+
+        it('leaves a dirty checkout alone rather than forcing over it', async function() {
+            fs.writeFileSync(path.join(origin, 'baker.yml'), 'name: two\n');
+            runIn(origin, 'commit', '--quiet', '-am', 'second');
+            fs.writeFileSync(path.join(checkout, 'baker.yml'), 'name: MY HOMEWORK\n');
+
+            const result = await Git.pullIfClean(checkout);
+
+            expect(result.kind).to.equal('dirty');
+            expect(fs.readFileSync(path.join(checkout, 'baker.yml'), 'utf8')).to.equal('name: MY HOMEWORK\n');
+        });
+
+        it('counts an untracked file as dirty, since a pull could clobber it', async function() {
+            fs.writeFileSync(path.join(checkout, 'notes.txt'), 'mine\n');
+            expect((await Git.pullIfClean(checkout)).kind).to.equal('dirty');
+        });
+
+        it('refuses to force when the checkout has diverged', async function() {
+            fs.writeFileSync(path.join(origin, 'baker.yml'), 'name: theirs\n');
+            runIn(origin, 'commit', '--quiet', '-am', 'theirs');
+
+            fs.writeFileSync(path.join(checkout, 'baker.yml'), 'name: mine\n');
+            runIn(checkout, 'commit', '--quiet', '-am', 'mine');
+
+            const result = await Git.pullIfClean(checkout);
+
+            expect(result.kind).to.equal('diverged');
+            expect(fs.readFileSync(path.join(checkout, 'baker.yml'), 'utf8')).to.equal('name: mine\n');
+        });
+
+        it('reports a detached checkout rather than pulling it', async function() {
+            const sha = String(runIn(checkout, 'rev-parse', 'HEAD')).trim();
+            runIn(checkout, 'checkout', '--quiet', sha);
+
+            expect((await Git.pullIfClean(checkout)).kind).to.equal('detached');
+        });
+    });
+
+    describe('Git.workingCopy', function() {
+        const home = withTempHome();
+        let work;
+
+        beforeEach(function() {
+            work = fs.mkdtempSync(path.join(os.tmpdir(), 'baker-wc2-'));
+        });
+
+        afterEach(function() {
+            fs.rmSync(work, { recursive: true, force: true });
+        });
+
+        it('copies the cache into a destination that does not exist yet', async function() {
+            const origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: cached\n');
+            const url = `file://${origin}`;
+            const cacheDir = await Git.clone(url);
+            const dest = path.join(work, 'checkout');
+
+            const result = await Git.workingCopy(cacheDir, url, dest);
+
+            expect(result.kind).to.equal('cloned');
+            expect(fs.readFileSync(path.join(dest, 'baker.yml'), 'utf8')).to.equal('name: cached\n');
+            // A real repository, not a bare copy of the files: origin points at
+            // the true remote, so the next re-bake can fast-forward it.
+            expect(fs.existsSync(path.join(dest, '.git'))).to.equal(true);
+            expect((await Git.pullIfClean(dest)).kind).to.equal('updated');
+            expect(home()).to.be.a('string');
+        });
+
+        it('refuses when the destination exists but is not a repository', async function() {
+            const origin = makeOriginRepo(work, 'origin', 'baker.yml', 'name: cached\n');
+            const url = `file://${origin}`;
+            const cacheDir = await Git.clone(url);
+            const dest = path.join(work, 'occupied');
+            fs.mkdirSync(dest);
+            fs.writeFileSync(path.join(dest, 'homework.txt'), 'mine\n');
+
+            let err;
+            try { await Git.workingCopy(cacheDir, url, dest); } catch (e) { err = e; }
+
+            expect(err).to.be.an('error');
+            expect(err.message).to.contain(dest);
+            expect(fs.readFileSync(path.join(dest, 'homework.txt'), 'utf8')).to.equal('mine\n');
+        });
+    });
+});
+
 // `baker check` resolves a profile address to a commit sha before fetching it, so
 // that a sha-pinned raw URL cannot serve a stale profile. These cover the two
 // pieces that live on Git; the fetch-and-cache half is in test-check-command.js.

@@ -337,11 +337,12 @@ makes pruning safe: [Bakelets](bakelets.md#files--declarative-file-placement).
 |-------|---------|-------------|
 | `git` | string or object | Clone a git repository |
 
-**String format**: `"repo_url:dest_path"`
+**String format**: `"repo_url[@ref]:dest_path"`
 **Object format**:
 ```yaml
 resources:
   - git: "https://github.com/user/repo.git:/home/vagrant/project"
+  - git: "https://github.com/user/repo.git@unit-1:units/one"   # clone at a branch or tag
   - git:
       repo: "https://github.com/user/private-repo.git"
       dest: "/home/vagrant/private"
@@ -349,6 +350,78 @@ resources:
 ```
 
 For private repos, include `vars:` with `githubuser` and `githubpass`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `repo` | string | Repository URL |
+| `dest` | string | Where it goes, relative to the environment root |
+| `private` | bool | Use `githubuser`/`githubpass` from `vars:` |
+| `extract` | bool | Inject the repo's **contents**, with no clone and no `.git` |
+| `ref` | string | Branch or tag to clone at — or, with `extract:`, to take the contents from |
+
+#### `ref:` — cloning at a branch or tag
+
+Both forms take a ref; without one, both clone the default branch:
+
+```yaml
+resources:
+  - git: "https://github.com/org/repo@unit-1:work"      # string form
+  - git:
+      repo: https://github.com/org/repo                  # object form
+      dest: work
+      ref: unit-1
+```
+
+It becomes `git clone --branch <ref>`, so a **tag** works too and leaves the clone with a detached
+HEAD — which is what asking for a tag means. `baker cleanup` names the ref in the command it hands
+back, because a plain `git clone` would not restore the same thing.
+
+In the string form the `@` is located within the repository path, so credentials
+(`https://user:pass@host/org/repo`), scp-style remotes (`git@github.com:org/repo.git@unit-1`), and
+refs containing a slash (`@release/1.2`) all parse correctly.
+
+The `baker bake` address grammar has its own equivalent — `baker bake owner/repo@unit-1` — which
+selects the ref for the *config being baked* rather than for a repository the config clones. See
+[Configuration sources](configuration-sources.md).
+
+#### `extract:` — inject repository content into a folder
+
+Clones put a *repository* somewhere. `extract:` puts its *contents* somewhere — into a directory
+someone already owns, with no `.git` for them to accidentally commit into:
+
+```yaml
+resources:
+  - git:
+      repo: https://github.com/your-org/course-config
+      dest: .claude          # a folder inside the person's own project
+      extract: true
+      ref: unit-1            # swap the unit, re-bake, the config changes
+```
+
+Nothing is cloned. Baker resolves `ref:` to an exact commit with `git ls-remote`, then downloads
+that commit's archive in a single request — no API rate limit to exhaust, and no repository left
+on disk.
+
+Three behaviours differ from the clone form, all of them deliberate:
+
+- **It is re-runnable.** A clone *skips* when the destination exists, because a checkout may hold
+  unpushed work. Injection *updates*, because updating the per-unit configuration is the point.
+- **It overlays.** Files in the archive are written; everything else in that folder is left alone,
+  so the person's own work survives a re-bake.
+- **It is pinned.** The ref resolves to a commit before the download, so two people baking on the
+  same day get identical bytes even if the branch moves between them.
+
+**Cleanup removes it.** Injection writes a `.baker-extract.json` manifest into `dest:` recording
+every file it placed and the hash each had when it was written. `baker cleanup` removes exactly
+those files, plus the manifest, plus any directory left empty afterwards. Anything else in that
+folder is yours and is never touched.
+
+A file that no longer matches its recorded hash has been edited since it was injected — it is
+**kept and reported**, not deleted. Same principle as the dirty-clone guard: Baker removes what it
+can prove it put there and nothing else.
+
+**Limits.** `extract:` needs `github.com` and a `local:` environment; any other host or provider is
+refused by name, and the fix is to drop `extract:` and use the clone form.
 
 ### `env:` — Environment Variables
 
